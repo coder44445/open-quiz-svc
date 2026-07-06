@@ -1,0 +1,25 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Local environment files
+.env
+.env.*
+.python-version
+
+# Local database files
+*.db
+postgres-data/
+
+# Python tool caches
+.pytest_cache/
+
+# Python dependency lock files
+uv.lock
