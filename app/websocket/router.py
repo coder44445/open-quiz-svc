@@ -131,3 +131,6 @@ async def websocket_room(websocket: WebSocket, room_id: str) -> None:
 
     except WebSocketDisconnect:
         logger.info("player_disconnected", room_id=room_id)
+
+    except Exception as e:
+        logger.error("websocket_error", room_id=room_id, error=str(e))
