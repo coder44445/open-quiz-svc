@@ -23,7 +23,8 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # Import SQLAlchemy Base (metadata source for autogenerate)
-from app.infrastructure.database.base import Base  # adjust if your path differs
+from app.infrastructure.database.base import Base
+import app.infrastructure.database.models
 
 # Metadata used for autogenerate migrations
 target_metadata = Base.metadata
