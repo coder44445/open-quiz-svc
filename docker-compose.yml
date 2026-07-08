@@ -41,8 +41,10 @@ services:
     build: .
     restart: on-failure
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/fastapi
       REDIS_URL: redis://redis:6379/0
@@ -53,11 +55,33 @@ services:
     volumes:
       - .:/app:rw
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      # /healthz checks DB and Redis connectivity.
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/healthz || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 5s
+      start_period: 15s
+
+  # ARQ background worker that processes AI question-generation jobs.
+  # Shares the same image as the app service — no separate Dockerfile needed.
+  worker:
+    build: .
+    # Override the default entrypoint so the container runs the ARQ worker
+    # instead of uvicorn.
+    entrypoint: ["python", "-m", "arq", "app.ai.worker.WorkerSettings"]
+    restart: on-failure
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/fastapi
+      REDIS_URL: redis://redis:6379/0
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_MODEL: qwen3.5:0.8b
+    volumes:
+      - .:/app:rw
 
 volumes:
   db_data:

@@ -36,6 +36,24 @@ services:
   #   image: ollama/ollama:latest
   #   ports:
   #     - "11434:11434"
-  
+
+  # ARQ background worker — runs on the same image as the app.
+  worker:
+    build: .
+    entrypoint: ["python", "-m", "arq", "app.ai.worker.WorkerSettings"]
+    restart: on-failure
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/fastapi
+      REDIS_URL: redis://redis:6379/0
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_MODEL: qwen3.5:0.8b
+    volumes:
+      - .:/app:rw
+
 volumes:
   db_data:
