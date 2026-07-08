@@ -32,12 +32,14 @@ async def websocket_room(websocket: WebSocket, room_id: str) -> None:
 
     - ``join``   — register the player and receive a player_id
     - ``topic``  — submit a quiz topic
-    - ``start``  — trigger AI question generation
-    - ``begin``  — start the timed game loop
+    - ``start``  — trigger AI question generation (transitions LOBBY → GENERATING)
+    - ``begin``  — start the timed game loop (transitions READY → IN_PROGRESS)
     - ``answer`` — submit an answer for the current question
     - ``rejoin`` — sync state for a reconnecting client
 
-    Unknown event types are logged and silently ignored.
+    The game loop is intentionally started as an asyncio background task so
+    this WebSocket can keep receiving messages (answers, rejoins, disconnects)
+    while questions are ticking.  Unknown event types are logged and ignored.
     """
 
     await websocket.accept()
@@ -47,6 +49,9 @@ async def websocket_room(websocket: WebSocket, room_id: str) -> None:
 
     # player_id is populated after the client sends a "join" event.
     player_id: str | None = None
+
+    # Track the running loop task to guard against duplicate begin events.
+    loop_task: asyncio.Task | None = None
 
     log = logger.bind(room_id=room_id)
     log.info("websocket_client_connected")
@@ -90,6 +95,11 @@ async def websocket_room(websocket: WebSocket, room_id: str) -> None:
                 })
 
             elif event_type == "begin":
+                # Prevent duplicate loops if the client sends begin more than once.
+                if loop_task and not loop_task.done():
+                    log.warning("begin_ignored_loop_already_running")
+                    continue
+
                 session = await service.begin_play(room_id)
 
                 await websocket.send_json({
@@ -97,25 +107,33 @@ async def websocket_room(websocket: WebSocket, room_id: str) -> None:
                     "questions": len(session.questions),
                 })
 
-                # run() blocks until the game finishes.
-                result = await service.loop.run(room_id)
+                # Run the game loop as a background task so this WebSocket
+                # continues receiving messages while the loop ticks through
+                # questions.  When finished, it pushes game_finished back
+                # through this same WebSocket connection.
+                async def _run_loop_and_notify(rid: str = room_id) -> None:
+                    try:
+                        result = await service.loop.run(rid)
+                        if isinstance(result, MatchResult):
+                            log.info(
+                                "game_result_sending",
+                                leaderboard_size=len(result.leaderboard),
+                            )
+                            await websocket.send_json({
+                                "type": "game_finished",
+                                "leaderboard": [
+                                    {
+                                        "player_id": p.player_id,
+                                        "name": p.player_name,
+                                        "score": p.score,
+                                    }
+                                    for p in result.leaderboard
+                                ],
+                            })
+                    except Exception:
+                        log.exception("game_loop_error")
 
-                if isinstance(result, MatchResult):
-                    log.info(
-                        "game_result_sending",
-                        leaderboard_size=len(result.leaderboard),
-                    )
-                    await websocket.send_json({
-                        "type": "game_finished",
-                        "leaderboard": [
-                            {
-                                "player_id": p.player_id,
-                                "name": p.player_name,
-                                "score": p.score,
-                            }
-                            for p in result.leaderboard
-                        ],
-                    })
+                loop_task = asyncio.create_task(_run_loop_and_notify())
 
             elif event_type == "answer":
                 session = await service.get_session(room_id)
@@ -188,6 +206,10 @@ async def websocket_room(websocket: WebSocket, room_id: str) -> None:
 
     except WebSocketDisconnect:
         log.info("websocket_client_disconnected")
+        # Cancel the loop task if the host disconnects mid-game.
+        if loop_task and not loop_task.done():
+            loop_task.cancel()
+            log.info("game_loop_cancelled_on_disconnect")
 
     except Exception:
         log.exception("websocket_unhandled_error")
