@@ -7,6 +7,8 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy import text
 
+from app.core.logging import logger
+
 router = APIRouter(tags=["Health"])
 
 
@@ -77,6 +79,7 @@ async def readyz(request: Request) -> dict[str, str]:
 
     # If resources are not initialized, service is not ready
     if resources is None:
+        logger.warning("readiness_check_failed", reason="resources_not_initialized")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="resources not initialized",
@@ -90,6 +93,11 @@ async def readyz(request: Request) -> dict[str, str]:
 
     # If any critical dependency is down, reject traffic
     if not (db_ok and redis_ok):
+        logger.warning(
+            "readiness_check_failed",
+            db_ok=db_ok,
+            redis_ok=redis_ok,
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={
@@ -99,6 +107,7 @@ async def readyz(request: Request) -> dict[str, str]:
             },
         )
 
+    logger.info("readiness_check_passed", db_ok=db_ok, redis_ok=redis_ok)
     return {"status": "ready"}
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.core.logging import logger
 from app.core.redis import redis
 from app.domain.game.answer import Answer
 from app.domain.game.scoring import ScoringService
@@ -24,21 +25,26 @@ class AnswerService:
     ) -> int:
         session = await self.session_store.get(room_id)
         if not session:
+            logger.warning("answer_submission_failed", room_id=room_id, reason="session_not_found")
             raise ValueError("Session not found")
 
         if session.state != session.state.IN_PROGRESS:
+            logger.warning("answer_submission_failed", room_id=room_id, reason="game_not_in_progress", state=session.state.name)
             raise ValueError("Game is not in progress")
 
         current_question = session.get_current_question()
         if not current_question or current_question.id != answer.question_id:
+            logger.warning("answer_submission_failed", room_id=room_id, reason="question_mismatch", question_id=answer.question_id)
             raise ValueError("Answer does not match current question")
 
         key = f"idempotency:answer:{room_id}:{answer.question_id}:{answer.player_id}"
         if await redis.get(key):
+            logger.warning("answer_submission_failed", room_id=room_id, reason="duplicate_answer", player_id=answer.player_id)
             raise ValueError("Duplicate answer")
 
         accepted = session.submit_answer(answer)
         if not accepted:
+            logger.warning("answer_submission_failed", room_id=room_id, reason="invalid_answer", player_id=answer.player_id)
             raise ValueError("Duplicate or invalid answer")
 
         score = ScoringService().score(session, answer)
@@ -75,4 +81,11 @@ class AnswerService:
             )
         )
 
+        logger.info(
+            "answer_submitted",
+            room_id=room_id,
+            player_id=answer.player_id,
+            question_id=answer.question_id,
+            score=score,
+        )
         return score
