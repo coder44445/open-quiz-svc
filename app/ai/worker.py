@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 
@@ -141,7 +142,6 @@ async def generate_questions(ctx, job_id: str) -> None:
                 # Exponential back-off: 2 s, 4 s, …
                 backoff = 2 ** attempt
                 log.info("generation_backoff", seconds=backoff, attempt=attempt)
-                import asyncio
                 await asyncio.sleep(backoff)
 
         # Publish progress: validation complete.
