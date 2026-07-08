@@ -14,7 +14,6 @@ from app.domain.events import GameEvent
 from app.infrastructure.events.event_bus import GameEventBus
 
 import asyncio
-import random
 import time
 
 @dataclass
@@ -50,33 +49,12 @@ class GameSession:
     event_bus: GameEventBus | None = None
 
     def add_player(self, player: Player) -> None:
+        """Register a player in this session."""
         self.players[player.id] = player
 
     def add_topic(self, topic: str) -> None:
+        """Append a topic to the pool used for question generation."""
         self.topics.append(topic)
-
-    def start(self) -> None:
-        """
-        Start the game session.
-        Selects topics and moves state to RUNNING.
-        """
-        if len(self.topics) < 1:
-            raise ValueError("Cannot start game without topics")
-
-        selected = random.sample(self.topics, min(5, len(self.topics)))
-
-        self.questions = [
-            Question(
-                id=i,
-                topic=t,
-                text=f"What is related to {t}?",
-                options=["A", "B", "C", "D"],
-                correct_index=0,
-            )
-            for i, t in enumerate(selected)
-        ]
-    
-        self.set_state(GameState.IN_PROGRESS)
 
     def get_current_question(self) -> Question | None:
         """Return current question."""
@@ -143,6 +121,11 @@ class GameSession:
         )
 
     def set_state(self, new_state: GameState) -> None:
+        """Transition to a new state via the state controller.
+
+        Publishes a GAME_STATE_CHANGED event if an event bus is attached.
+        Payloads use .value (plain string) so they are JSON-serialisable.
+        """
         old = self.state
 
         self.state = self.state_controller.transition(self.state, new_state)
@@ -154,14 +137,21 @@ class GameSession:
                         type=EventType.GAME_STATE_CHANGED,
                         room_id=self.room_id,
                         payload={
-                            "from": old,
-                            "to": self.state,
+                            # Use .value so the payload is JSON-serialisable.
+                            "from": old.value,
+                            "to": self.state.value,
                         },
                     )
                 )
             )
 
-    def _sync_session_state(self):
+    def _sync_session_state(self) -> None:
+        """Publish the current question index, state, and time limit to subscribers.
+
+        Called by next_question() after every question advance so reconnecting
+        clients receive an up-to-date snapshot.  Payloads use .value so they
+        are JSON-serialisable.
+        """
         if not self.event_bus:
             return
 
@@ -172,7 +162,8 @@ class GameSession:
                     room_id=self.room_id,
                     payload={
                         "current_question_index": self.current_question_index,
-                        "state": self.state,
+                        # Use .value so the payload is JSON-serialisable.
+                        "state": self.state.value,
                         "time_limit": self.time_limit,
                     },
                 )
