@@ -11,17 +11,27 @@ from app.infrastructure.database.session import (
     create_session_factory,
     dispose_engine,
 )
-
 from app.infrastructure.redis.client import create_redis_client
+from app.core.config import settings
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Manage application startup and shutdown."""
+    """Manage application startup and shutdown.
+
+    Initialises shared resources (Redis, database session factory) during
+    startup and tears them down cleanly on shutdown.  Any exception during
+    startup propagates immediately so the process exits non-zero rather than
+    silently serving broken requests.
+    """
 
     configure_logging()
 
-    logger.info("application_starting")
+    logger.info(
+        "application_starting",
+        environment=settings.environment,
+        debug=settings.debug,
+    )
 
     redis = create_redis_client()
     session_factory = create_session_factory()
@@ -39,7 +49,16 @@ async def lifespan(app: FastAPI):
     finally:
         logger.info("application_stopping")
 
-        await redis.aclose()
-        await dispose_engine()
+        try:
+            await redis.aclose()
+            logger.info("redis_connection_closed")
+        except Exception:
+            logger.exception("redis_close_error")
+
+        try:
+            await dispose_engine()
+            logger.info("database_engine_disposed")
+        except Exception:
+            logger.exception("database_dispose_error")
 
         logger.info("application_stopped")
