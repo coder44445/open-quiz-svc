@@ -18,6 +18,7 @@ from app.infrastructure.database.models.question import Question as QuestionMode
 from app.domain.game.state import GameState
 from app.infrastructure.redis.session_repository import SessionRepository
 from app.core.config import settings
+from app.core.redis import get_arq_settings
 from app import metrics
 
 
@@ -85,98 +86,103 @@ async def generate_questions(ctx, job_id: str) -> None:
             GameEvent(
                 type=EventType.JOB_PROGRESS,
                 room_id=job.room_id,
-                payload={"job_id": job.job_id, "progress": 30},
+                payload={"job_id": job.job_id, "progress": 10},
             )
         )
 
-        # Retry with exponential back-off for transient AI failures.
-        questions = None
+        all_questions = []
         max_attempts = 3
-        for attempt in range(1, max_attempts + 1):
-            metrics.mark_attempt()
-            attempt_start = time.perf_counter()
 
-            log.info("generation_attempt_started", attempt=attempt, max_attempts=max_attempts)
+        # Generate questions one by one for streaming UX.
+        for i in range(job.count):
+            topic = job.topics[i % len(job.topics)]
+            question = None
+            
+            for attempt in range(1, max_attempts + 1):
+                metrics.mark_attempt()
+                attempt_start = time.perf_counter()
+                log.info("generation_attempt_started", attempt=attempt, question_index=i, topic=topic)
 
-            try:
-                questions = await engine.generate_questions(
-                    topics=job.topics,
-                    difficulty=job.difficulty,
-                    count=job.count,
-                )
-                elapsed_ms = round((time.perf_counter() - attempt_start) * 1000, 2)
-                log.info(
-                    "generation_attempt_succeeded",
-                    attempt=attempt,
-                    question_count=len(questions),
-                    elapsed_ms=elapsed_ms,
-                )
-                break
-
-            except Exception as exc:
-                elapsed_ms = round((time.perf_counter() - attempt_start) * 1000, 2)
-                log.warning(
-                    "generation_attempt_failed",
-                    attempt=attempt,
-                    error=str(exc),
-                    elapsed_ms=elapsed_ms,
-                    will_retry=attempt < max_attempts,
-                )
-
-                await event_bus.publish(
-                    GameEvent(
-                        type=EventType.JOB_PROGRESS,
-                        room_id=job.room_id,
-                        payload={
-                            "job_id": job.job_id,
-                            "progress": int(30 + (attempt / max_attempts) * 40),
-                            "last_error": str(exc),
-                        },
+                try:
+                    qs = await engine.generate_questions(
+                        topics=[topic],
+                        difficulty=job.difficulty,
+                        count=1,
                     )
+                    question = qs[0]
+                    elapsed_ms = round((time.perf_counter() - attempt_start) * 1000, 2)
+                    log.info(
+                        "generation_attempt_succeeded",
+                        attempt=attempt,
+                        question_index=i,
+                        elapsed_ms=elapsed_ms,
+                    )
+                    break
+
+                except Exception as exc:
+                    elapsed_ms = round((time.perf_counter() - attempt_start) * 1000, 2)
+                    log.warning(
+                        "generation_attempt_failed",
+                        attempt=attempt,
+                        error=str(exc),
+                        elapsed_ms=elapsed_ms,
+                        question_index=i,
+                    )
+
+                    if attempt == max_attempts:
+                        raise
+
+                    backoff = 2 ** attempt
+                    log.info("generation_backoff", seconds=backoff, attempt=attempt)
+                    await asyncio.sleep(backoff)
+
+            if not question:
+                raise ValueError(f"Failed to generate question {i+1} after {max_attempts} attempts")
+
+            all_questions.append(question)
+
+            # Persist this specific question immediately
+            async with UnitOfWork() as uow:
+                match = await uow.matches.get_by_room(job.room_id)
+                if not match:
+                    raise ValueError("Match record not found for generated questions")
+
+                q_model = QuestionModel(
+                    match_id=match.id,
+                    order=i,
+                    question_json=question.__dict__,
                 )
+                await uow.questions.save_all([q_model])
+            
+            log.info("question_persisted", question_index=i)
 
-                if attempt == max_attempts:
-                    # All retries exhausted — let the outer except handle it.
-                    raise
-
-                # Exponential back-off: 2 s, 4 s, …
-                backoff = 2 ** attempt
-                log.info("generation_backoff", seconds=backoff, attempt=attempt)
-                await asyncio.sleep(backoff)
-
-        # Publish progress: validation complete.
-        await event_bus.publish(
-            GameEvent(
-                type=EventType.JOB_PROGRESS,
-                room_id=job.room_id,
-                payload={"job_id": job.job_id, "progress": 80},
+            # Notify clients that one question is ready
+            progress = int(10 + ((i + 1) / job.count) * 80)
+            await event_bus.publish(
+                GameEvent(
+                    type=EventType.QUESTION_READY,
+                    room_id=job.room_id,
+                    payload={"job_id": job.job_id, "question": question.__dict__, "index": i}
+                )
             )
-        )
+            await event_bus.publish(
+                GameEvent(
+                    type=EventType.JOB_PROGRESS,
+                    room_id=job.room_id,
+                    payload={"job_id": job.job_id, "progress": progress}
+                )
+            )
 
-        # Persist questions and update match state in the database.
+        # Update the match state to READY now that all questions are generated
         async with UnitOfWork() as uow:
             match = await uow.matches.get_by_room(job.room_id)
-            if not match:
-                raise ValueError("Match record not found for generated questions")
-
-            questions_to_save = [
-                QuestionModel(
-                    match_id=match.id,
-                    order=index,
-                    question_json=q.__dict__,
-                )
-                for index, q in enumerate(questions)
-            ]
-            await uow.questions.save_all(questions_to_save)
             match.state = GameState.READY.value
             await uow.matches.save(match)
-
-        log.info("questions_persisted", question_count=len(questions))
 
         # Update the live session in Redis so clients see READY state.
         session = await session_store.get(job.room_id)
         if session:
-            session.questions = questions
+            session.questions = all_questions
             session.set_state(GameState.READY)
             await session_store.save(session)
             log.info("session_state_updated", state=GameState.READY.value)
@@ -186,14 +192,14 @@ async def generate_questions(ctx, job_id: str) -> None:
         # Cache raw question JSON for fast access by clients.
         await ctx["redis"].set(
             f"questions:{job.room_id}",
-            json.dumps([q.__dict__ for q in questions]),
+            json.dumps([q.__dict__ for q in all_questions]),
         )
 
         job.status = JobStatus.COMPLETED
         await job_repo.save(job)
         metrics.mark_job_completed()
 
-        log.info("question_generation_completed", question_count=len(questions))
+        log.info("question_generation_completed", question_count=len(all_questions))
 
         # Notify clients that questions are ready.
         await event_bus.publish(
@@ -202,7 +208,7 @@ async def generate_questions(ctx, job_id: str) -> None:
                 room_id=job.room_id,
                 payload={
                     "job_id": job.job_id,
-                    "question_count": len(questions),
+                    "question_count": len(all_questions),
                 },
             )
         )
@@ -228,4 +234,32 @@ async def generate_questions(ctx, job_id: str) -> None:
 
 
 class WorkerSettings:
+    """ARQ worker configuration.
+
+    on_startup re-initialises the module-level Redis client inside the worker
+    process.  The client is created at import time for the web process but the
+    worker is a separate OS process so it needs its own initialised connection.
+    """
+
     functions = [generate_questions]
+    redis_settings = get_arq_settings(settings.redis_url)
+
+    @staticmethod
+    async def on_startup(ctx: dict) -> None:
+        """Initialise shared resources inside the ARQ worker process."""
+        import app.core.redis as redis_module
+        from redis.asyncio import Redis
+
+        # Re-create the module-level redis singleton for this process.
+        redis_module.redis = Redis.from_url(settings.redis_url, decode_responses=True)
+        logger.info("arq_worker_started", redis_url=settings.redis_url)
+
+    @staticmethod
+    async def on_shutdown(ctx: dict) -> None:
+        """Clean up shared resources when the worker shuts down."""
+        import app.core.redis as redis_module
+        try:
+            await redis_module.redis.aclose()
+            logger.info("arq_worker_redis_closed")
+        except Exception:
+            logger.warning("arq_worker_redis_close_failed")

@@ -1,77 +1,148 @@
 from __future__ import annotations
-from dataclasses import asdict
-from app.domain.game.state import GameState
 
 import asyncio
+from dataclasses import asdict
 from datetime import datetime, timezone
 
 from app.core.logging import logger
-from app.services.match_result import MatchResult
-from app.services.game_service import GameService
+from app.domain.events import GameEvent
+from app.domain.event_types import EventType
+from app.domain.game.state import GameState
+from app.infrastructure.events.event_bus import GameEventBus
 from app.infrastructure.redis.session_repository import SessionRepository
 from app.infrastructure.database.unit_of_work import UnitOfWork
+from app.services.match_result import MatchResult
+
+
+# Poll interval when waiting for all players to answer early.
+_POLL_INTERVAL = 0.5
 
 
 class GameLoop:
     """
     Executes real-time game progression.
-    Stateless. Redis is the source of truth.
+
+    Completely decoupled from any WebSocket connection — it runs as an
+    application-level background task so it survives host disconnects.
+
+    For each question:
+    1. Broadcasts the full question payload over the event bus so every
+       connected client receives it simultaneously.
+    2. Waits up to ``session.time_limit`` seconds, polling every
+       ``_POLL_INTERVAL`` seconds to advance early if all players answered.
+    3. Broadcasts the correct answer and leaderboard snapshot.
+    4. Advances to the next question.
     """
 
-    def __init__(self, service: GameService, unit_of_work_factory: type[UnitOfWork] | None = None) -> None:
-        self.service = service
+    def __init__(
+        self,
+        service=None,  # kept for backwards compat — not used internally
+        unit_of_work_factory: type[UnitOfWork] | None = None,
+    ) -> None:
         self.store = SessionRepository()
+        self.event_bus = GameEventBus()
         self.uow_factory = unit_of_work_factory or UnitOfWork
 
     async def run(self, room_id: str) -> MatchResult | None:
         session = await self.store.get(room_id)
-
         if not session:
+            logger.warning("game_loop_no_session", room_id=room_id)
             return None
 
-        logger.info("game_loop_started", room_id=room_id)
+        logger.info("game_loop_started", room_id=room_id, question_count=len(session.questions))
 
-        while True:
+        for question_index, question in enumerate(session.questions):
+            # Reload session from Redis to pick up latest player list / scores.
             session = await self.store.get(room_id)
-
-            if not session or session.state.name == "FINISHED":
+            if not session or session.state == GameState.FINISHED:
                 break
 
-            if session.state.name != "IN_PROGRESS":
-                await asyncio.sleep(0.2)
-                continue
-
-            question = session.get_current_question()
-
-            if not question:
-                session.set_state(GameState.FINISHED)
-                await self.store.save(session)
-                break
+            session.current_question_index = question_index
+            import time as _time
+            session.question_started_at = int(_time.time())
+            await self.store.save(session)
 
             logger.info(
-                "question_sent",
+                "question_broadcasting",
                 room_id=room_id,
+                question_index=question_index,
                 question_id=question.id,
             )
 
-            # Persist session state and publish sync so reconnecting clients
-            # can recover the current question and remaining time.
-            await self.store.save(session)
-            try:
-                session._sync_session_state()
-            except Exception:
-                # avoid crashing the loop on event publish issues
-                logger.exception("session_sync_failed", room_id=room_id)
+            # ── Broadcast full question to every connected client ──────────
+            await self.event_bus.publish(
+                GameEvent(
+                    type=EventType.QUESTION_SENT,
+                    room_id=room_id,
+                    payload={
+                        "index": question_index,
+                        "total": len(session.questions),
+                        "time_limit": session.time_limit,
+                        "question": {
+                            "id": question.id,
+                            "topic": question.topic,
+                            "text": question.text,
+                            "options": question.options,
+                            # NOTE: correct_index is intentionally withheld here.
+                            # It is only sent in QUESTION_RESULT below.
+                        },
+                    },
+                )
+            )
 
-            await asyncio.sleep(session.time_limit)
+            # ── Wait: time limit OR all players answered ───────────────────
+            elapsed = 0.0
+            while elapsed < session.time_limit:
+                await asyncio.sleep(_POLL_INTERVAL)
+                elapsed += _POLL_INTERVAL
 
-            session.next_question()
-            await self.store.save(session)
+                # Re-read session to check latest answers
+                session = await self.store.get(room_id)
+                if not session:
+                    return None
 
+                if session.all_players_answered():
+                    logger.info(
+                        "all_players_answered_early",
+                        room_id=room_id,
+                        question_index=question_index,
+                        elapsed=round(elapsed, 1),
+                    )
+                    break
+
+            # ── Broadcast result: reveal correct answer + leaderboard ──────
+            await self.event_bus.publish(
+                GameEvent(
+                    type=EventType.QUESTION_RESULT,
+                    room_id=room_id,
+                    payload={
+                        "index": question_index,
+                        "correct_index": question.correct_index,
+                        "leaderboard": [
+                            {
+                                "player_id": p.player_id,
+                                "name": p.player_name,
+                                "score": p.score,
+                            }
+                            for p in session.get_leaderboard()
+                        ],
+                    },
+                )
+            )
+
+            logger.info(
+                "question_completed",
+                room_id=room_id,
+                question_index=question_index,
+            )
+
+        # ── Game finished ──────────────────────────────────────────────────
         session = await self.store.get(room_id)
-
         if not session:
             return None
+
+        session.state = GameState.FINISHED
+        await self.store.save(session)
 
         result = MatchResult(
             room_id=room_id,
@@ -79,6 +150,25 @@ class GameLoop:
             total_questions=len(session.questions),
         )
 
+        # Broadcast final leaderboard to all clients
+        await self.event_bus.publish(
+            GameEvent(
+                type=EventType.GAME_FINISHED,
+                room_id=room_id,
+                payload={
+                    "leaderboard": [
+                        {
+                            "player_id": p.player_id,
+                            "name": p.player_name,
+                            "score": p.score,
+                        }
+                        for p in result.leaderboard
+                    ]
+                },
+            )
+        )
+
+        # Persist result to database
         async with self.uow_factory() as uow:
             match = None
             if session.match_id is not None:
@@ -95,6 +185,5 @@ class GameLoop:
             match.total_questions = len(session.questions)
             match.leaderboard = [asdict(p) for p in session.get_leaderboard()]
 
-        logger.info("game_finished", room_id=room_id)
-
+        logger.info("game_finished", room_id=room_id, player_count=len(session.players))
         return result
