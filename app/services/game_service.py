@@ -15,6 +15,13 @@ from app.infrastructure.database.models.match import Match
 from app.infrastructure.database.models.player import Player as PlayerModel
 from app.infrastructure.database.models.match_player import MatchPlayer
 from app.services.question_service import create_generation_job
+import random
+import asyncio
+from app.infrastructure.events.event_bus import GameEventBus
+from app.domain.events import GameEvent
+from app.domain.event_types import EventType
+
+event_bus = GameEventBus()
 
 
 class GameService:
@@ -102,7 +109,7 @@ class GameService:
                         )
                     )
 
-    async def add_topic(self, room_id: str, topic: str) -> None:
+    async def add_topic(self, room_id: str, topic: str, player_id: str | None = None) -> None:
         """Append a topic to the session's topic list.
 
         Creates the session if it does not exist yet (host may send topics
@@ -116,13 +123,74 @@ class GameService:
             session = await self.create_session(room_id)
 
         session.add_topic(topic)
+        
+        # Topic collection flow tracking
+        if player_id and player_id in session.pending_topic_submitters:
+            session.pending_topic_submitters.remove(player_id)
+            
         await self.store.save(session)
         logger.info(
             "topic_added",
             room_id=room_id,
             topic=topic,
             topic_count=len(session.topics),
+            pending_count=len(session.pending_topic_submitters),
         )
+
+        # If we were collecting topics and everyone submitted, auto-start
+        if session.chosen_topic_submitters and not session.pending_topic_submitters and session.state == GameState.LOBBY:
+            logger.info("all_topics_collected_auto_starting", room_id=room_id)
+            # We notify clients that collection is done
+            await event_bus.publish(GameEvent(
+                type=EventType.TOPICS_COLLECTED,
+                room_id=room_id,
+                payload={}
+            ))
+            await self.start_game(room_id)
+
+    async def request_topics(self, room_id: str) -> None:
+        """Pick random players to submit topics, and start a 30s timeout."""
+        session = await self.store.get(room_id)
+        if not session or session.state != GameState.LOBBY:
+            raise ValueError("Can only request topics from LOBBY")
+
+        n = min(5, len(session.players))
+        if n == 0:
+            raise ValueError("No players to request topics from")
+
+        chosen = random.sample(list(session.players.values()), n)
+        session.chosen_topic_submitters = [p.id for p in chosen]
+        session.pending_topic_submitters = [p.id for p in chosen]
+        await self.store.save(session)
+        
+        logger.info("topics_requested", room_id=room_id, chosen_count=n)
+
+        # Broadcast per-player events
+        for player in chosen:
+            await event_bus.publish(GameEvent(
+                type=EventType.TOPIC_REQUEST,
+                room_id=room_id,
+                payload={"player_id": player.id}
+            ))
+
+        # Start 30s timeout task
+        async def _timeout_task():
+            await asyncio.sleep(30)
+            current_session = await self.store.get(room_id)
+            # If still waiting for topics in LOBBY, force start
+            if current_session and current_session.state == GameState.LOBBY and current_session.chosen_topic_submitters:
+                logger.info("topic_collection_timeout", room_id=room_id)
+                await event_bus.publish(GameEvent(
+                    type=EventType.TOPICS_COLLECTED,
+                    room_id=room_id,
+                    payload={"timeout": True}
+                ))
+                # Add default topic if none submitted
+                if not current_session.topics:
+                    await self.add_topic(room_id, "General Knowledge")
+                await self.start_game(room_id)
+
+        asyncio.create_task(_timeout_task())
 
     async def start_game(self, room_id: str, count: int = 5) -> GameSession:
         """Transition the session to GENERATING and enqueue an AI question-generation job.

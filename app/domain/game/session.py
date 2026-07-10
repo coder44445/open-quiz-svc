@@ -34,6 +34,8 @@ class GameSession:
 
     players: dict[str, Player] = field(default_factory=dict)
     topics: list[str] = field(default_factory=list)
+    chosen_topic_submitters: list[str] = field(default_factory=list)
+    pending_topic_submitters: list[str] = field(default_factory=list)
 
     questions: list[Question] = field(default_factory=list)
     answers: dict[str, list[Answer]] = field(default_factory=dict)
@@ -101,6 +103,27 @@ class GameSession:
         
     def is_finished(self) -> bool:
         return self.state.name == "FINISHED"
+
+    def all_players_answered(self) -> bool:
+        """Return True if every connected player has submitted an answer for the current question."""
+        if not self.players:
+            return False
+        key = str(self.current_question_index)
+        answered_ids = {a.player_id for a in self.answers.get(key, [])}
+        return all(pid in answered_ids for pid in self.players)
+
+    def current_question_dict(self) -> dict | None:
+        """Return the current question as a JSON-serialisable dict, or None."""
+        q = self.get_current_question()
+        if q is None:
+            return None
+        return {
+            "id": q.id,
+            "topic": q.topic,
+            "text": q.text,
+            "options": q.options,
+            "correct_index": q.correct_index,
+        }
 
     def get_leaderboard(self) -> list[LeaderboardEntry]:
         """
