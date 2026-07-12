@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+import dataclasses
 
 import structlog
 
@@ -110,6 +111,8 @@ async def generate_questions(ctx, job_id: str) -> None:
                         count=1,
                     )
                     question = qs[0]
+                    # Update ID to match the overall job sequence index (i)
+                    question.id = i
                     elapsed_ms = round((time.perf_counter() - attempt_start) * 1000, 2)
                     log.info(
                         "generation_attempt_succeeded",
@@ -150,7 +153,7 @@ async def generate_questions(ctx, job_id: str) -> None:
                 q_model = QuestionModel(
                     match_id=match.id,
                     order=i,
-                    question_json=question.__dict__,
+                    question_json=dataclasses.asdict(question),
                 )
                 await uow.questions.save_all([q_model])
             
@@ -162,7 +165,7 @@ async def generate_questions(ctx, job_id: str) -> None:
                 GameEvent(
                     type=EventType.QUESTION_READY,
                     room_id=job.room_id,
-                    payload={"job_id": job.job_id, "question": question.__dict__, "index": i}
+                    payload={"job_id": job.job_id, "question": dataclasses.asdict(question), "index": i}
                 )
             )
             await event_bus.publish(
@@ -192,7 +195,7 @@ async def generate_questions(ctx, job_id: str) -> None:
         # Cache raw question JSON for fast access by clients.
         await ctx["redis"].set(
             f"questions:{job.room_id}",
-            json.dumps([q.__dict__ for q in all_questions]),
+            json.dumps([dataclasses.asdict(q) for q in all_questions]),
         )
 
         job.status = JobStatus.COMPLETED
@@ -213,8 +216,10 @@ async def generate_questions(ctx, job_id: str) -> None:
             )
         )
 
-    except Exception as exc:
-        log.exception("question_generation_failed", error=str(exc))
+    except (Exception, asyncio.CancelledError) as exc:
+        is_cancel = isinstance(exc, asyncio.CancelledError)
+        error_msg = "Job timed out" if is_cancel else str(exc)
+        log.exception("question_generation_failed", error=error_msg)
 
         job.status = JobStatus.FAILED
         await job_repo.save(job)
@@ -227,10 +232,12 @@ async def generate_questions(ctx, job_id: str) -> None:
                 room_id=job.room_id,
                 payload={
                     "job_id": job.job_id,
-                    "error": str(exc),
+                    "error": error_msg,
                 },
             )
         )
+        if is_cancel:
+            raise
 
 
 class WorkerSettings:

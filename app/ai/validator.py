@@ -1,18 +1,29 @@
 from __future__ import annotations
 
 import structlog
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from app.domain.question.model import Question
 
 logger = structlog.get_logger(__name__)
 
+class GeneratedQuestionSchema(BaseModel):
+    """Pydantic schema defining the strict structure expected from the AI provider."""
+    question: str = Field(..., min_length=1)
+    options: list[str] = Field(..., min_length=2)
+    correct_index: int
+    topic: str = Field(..., min_length=1)
+    difficulty: str = Field(..., min_length=1)
+
+    @model_validator(mode='after')
+    def validate_correct_index(self) -> "GeneratedQuestionSchema":
+        if not (0 <= self.correct_index < len(self.options)):
+            raise ValueError(f"correct_index {self.correct_index} is out of bounds for options")
+        return self
+
 
 def validate_questions(raw_questions: list[dict], expected_count: int) -> list[Question]:
-    """Validate and coerce raw AI output into Question domain objects.
-
-    Iterates over each raw dict and enforces the minimum required fields.
-    Raises ValueError with a descriptive message on the first invalid entry
-    so callers can decide whether to retry or fail the job.
+    """Validate and coerce raw AI output into Question domain objects using Pydantic.
 
     Args:
         raw_questions:  List of dicts as returned by the AI provider.
@@ -34,69 +45,37 @@ def validate_questions(raw_questions: list[dict], expected_count: int) -> list[Q
         )
         raise ValueError("AI output must be a list of questions")
 
+    if len(raw_questions) != expected_count:
+        logger.error(
+            "question_count_mismatch",
+            expected=expected_count,
+            actual=len(raw_questions),
+        )
+        raise ValueError(
+            f"Expected {expected_count} questions, but AI returned {len(raw_questions)}"
+        )
+
     questions: list[Question] = []
 
     for index, raw in enumerate(raw_questions):
-        if not isinstance(raw, dict):
-            logger.warning(
-                "question_skipped",
-                index=index,
-                reason="not_a_dict",
-                actual_type=type(raw).__name__,
-            )
-            raise ValueError("Each question must be an object")
-
-        question_text = raw.get("question")
-        options = raw.get("options")
-        correct_index = raw.get("correct_index")
-        topic = raw.get("topic")
-
-        # Validate each required field and log exactly what is wrong.
-        if not isinstance(question_text, str) or not question_text.strip():
-            logger.warning("question_validation_field_error", index=index, field="question")
-            raise ValueError("Question text is required")
-
-        if not isinstance(options, list) or len(options) < 2:
+        try:
+            validated = GeneratedQuestionSchema.model_validate(raw)
+        except ValidationError as exc:
             logger.warning(
                 "question_validation_field_error",
                 index=index,
-                field="options",
-                options_count=len(options) if isinstance(options, list) else None,
+                errors=exc.errors(),
             )
-            raise ValueError("Each question must include at least two options")
-
-        if not isinstance(correct_index, int) or not (0 <= correct_index < len(options)):
-            logger.warning(
-                "question_validation_field_error",
-                index=index,
-                field="correct_index",
-                correct_index=correct_index,
-                options_count=len(options),
-            )
-            raise ValueError("correct_index must be a valid option index")
-
-        if not isinstance(topic, str) or not topic.strip():
-            logger.warning("question_validation_field_error", index=index, field="topic")
-            raise ValueError("Topic is required for each question")
+            raise ValueError(f"Question validation failed: {exc}") from exc
 
         questions.append(
             Question(
                 id=index,
-                topic=topic,
-                text=question_text,
-                options=options,
-                correct_index=correct_index,
+                topic=validated.topic,
+                text=validated.question,
+                options=validated.options,
+                correct_index=validated.correct_index,
             )
-        )
-
-    if len(questions) != expected_count:
-        logger.error(
-            "question_count_mismatch",
-            expected=expected_count,
-            actual=len(questions),
-        )
-        raise ValueError(
-            f"Expected {expected_count} questions, but AI returned {len(questions)}"
         )
 
     logger.info("question_validation_passed", question_count=len(questions))

@@ -51,22 +51,49 @@ class OllamaProvider:
         log = logger.bind(model=self.model, topics=topics, count=count, difficulty=difficulty.value)
         log.info("ollama_request_started")
 
-        prompt = f"""
-                Generate {count} MCQ questions.
+        topic_str = topics[0] if topics else "general knowledge"
+        prompt = f"""You are an expert MCQ generator.
 
-                Topics: {topics}
-                Difficulty: {difficulty}
+                Generate exactly {count} multiple-choice questions.
 
-                Return ONLY valid JSON:
+                Return ONLY valid JSON.
+
+                Requirements:
+                - The top-level JSON value MUST be an array.
+                - The array MUST contain exactly {count} objects.
+                - NEVER return a single JSON object.
+                - NEVER include markdown, explanations, reasoning, or any text outside the JSON.
+                - Each object must contain exactly these fields:
+                - question (string)
+                - options (array of exactly 4 meaningful strings)
+                - correct_index (integer from 0 to 3, where 0 is the first option, 1 is the second, etc.)
+                - topic (string)
+                - difficulty (string)
+
+                Rules:
+                - Exactly one correct answer.
+                - Options must be meaningful and correspond to the question.
+                - topic must equal "{topic_str}".
+                - difficulty must equal "{difficulty.value}".
+
+                Example output for count=1:
+
                 [
-                  {{
-                    "question": "...",
-                    "options": ["a","b","c","d"],
-                    "correct_index": 0,
-                    "topic": "...",
-                    "difficulty": "{difficulty}"
-                  }}
+                {{
+                    "question": "Which data structure uses LIFO ordering?",
+                    "options": [
+                    "Queue",
+                    "Stack",
+                    "Tree",
+                    "Graph"
+                    ],
+                    "correct_index": 1,
+                    "topic": "programming",
+                    "difficulty": "medium"
+                }}
                 ]
+
+                Do not return a single object under any circumstance.
             """
 
         start = time.perf_counter()
@@ -74,7 +101,9 @@ class OllamaProvider:
         try:
             response = await self.client.chat(
                 model=self.model,
+                think=False,
                 messages=[{"role": "user", "content": prompt}],
+                format="json",
                 options={
                     "temperature": settings.llm_temperature,
                 },
@@ -85,21 +114,19 @@ class OllamaProvider:
             raise
 
         elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
-        log.info("ollama_response_received", elapsed_ms=elapsed_ms)
+        log.info("ollama_response_received", elapsed_ms=elapsed_ms,response=response)
 
-        # Ollama returns a chat completion object; extract the assistant message.
-        if not isinstance(response, dict):
-            log.error(
-                "ollama_unexpected_response_type",
-                actual_type=type(response).__name__,
-            )
-            raise ValueError("Unexpected response from Ollama provider")
+        # Ollama returns a ChatResponse object (often a Pydantic model or dataclass in newer versions)
+        try:
+            content = response.message.content
+        except AttributeError:
+            # Fallback if it's somehow a dict in an older version
+            content = getattr(response, "get", lambda x, y: {})("message", {}).get("content")
 
-        content = response.get("message", {}).get("content")
         if not isinstance(content, str):
             log.error(
                 "ollama_missing_content",
-                message_keys=list(response.get("message", {}).keys()),
+                actual_type=type(response).__name__,
             )
             raise ValueError("Ollama response content is missing or invalid")
 

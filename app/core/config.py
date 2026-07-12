@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     
     ollama_model: str = "qwen3:8b"
     
-    llm_temperature: float = 0.3
+    llm_temperature: float = 0.7
     
     llm_timeout: int = 120
 
