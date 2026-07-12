@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import dataclasses
 
 import structlog
 
@@ -163,9 +164,9 @@ class SessionRepository:
                 for player_id, player in session.players.items()
             },
             "topics": session.topics,
-            "questions": [question.__dict__ for question in session.questions],
+            "questions": [dataclasses.asdict(question) for question in session.questions],
             "answers": {
-                question_id: [answer.__dict__ for answer in answers]
+                question_id: [dataclasses.asdict(answer) for answer in answers]
                 for question_id, answers in session.answers.items()
             },
             "time_limit": session.time_limit,
