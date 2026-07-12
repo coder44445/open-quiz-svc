@@ -51,11 +51,42 @@ class GameLoop:
 
         logger.info("game_loop_started", room_id=room_id, question_count=len(session.questions))
 
-        for question_index, question in enumerate(session.questions):
-            # Reload session from Redis to pick up latest player list / scores.
+        from app.core.config import settings
+        expected_questions = settings.total_questions
+        question_index = 0
+
+        while question_index < expected_questions:
+            # Reload session from Redis to pick up latest player list, scores, and newly generated questions.
             session = await self.store.get(room_id)
             if not session or session.state == GameState.FINISHED:
                 break
+                
+            # If the next question isn't generated yet, wait for it
+            if question_index >= len(session.questions):
+                # Broadcast a waiting event so the UI knows we are stuck waiting for the AI
+                await self.event_bus.publish(
+                    GameEvent(
+                        type=EventType.GAME_STATE_CHANGED,
+                        room_id=room_id,
+                        payload={"from": session.state.value, "to": "waiting_for_ai"}
+                    )
+                )
+                logger.info("game_loop_waiting_for_ai", room_id=room_id, question_index=question_index)
+                
+                # Poll until the question is ready or we time out
+                wait_time = 0
+                while question_index >= len(session.questions) and wait_time < 180:
+                    await asyncio.sleep(1.0)
+                    wait_time += 1
+                    session = await self.store.get(room_id)
+                    if not session or session.state == GameState.FINISHED:
+                        return None
+                        
+                # If we broke out of polling and still don't have the question, break out of game loop
+                if question_index >= len(session.questions):
+                    break
+
+            question = session.questions[question_index]
 
             session.current_question_index = question_index
             import time as _time
@@ -76,7 +107,7 @@ class GameLoop:
                     room_id=room_id,
                     payload={
                         "index": question_index,
-                        "total": len(session.questions),
+                        "total": expected_questions,
                         "time_limit": session.time_limit,
                         "question": {
                             "id": question.id,
@@ -135,6 +166,12 @@ class GameLoop:
                 room_id=room_id,
                 question_index=question_index,
             )
+            
+            # Brief pause so players can see the correct answer/leaderboard updates
+            # before the next question is broadcast (or the game finishes).
+            await asyncio.sleep(3.0)
+            
+            question_index += 1
 
         # ── Game finished ──────────────────────────────────────────────────
         session = await self.store.get(room_id)

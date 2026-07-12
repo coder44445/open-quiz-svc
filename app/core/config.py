@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     max_topics_per_player: int = 10
     selected_topics_per_game: int = 5
     question_time_limit: int = 60
+    
+    total_questions: int = Field(default=15, description="Total number of questions to generate per game")
+    generation_batch_size: int = Field(default=1, description="Number of questions to generate per LLM call")
 
     llm_provider: str = "ollama"
 

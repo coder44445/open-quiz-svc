@@ -58,8 +58,6 @@ class SessionRepository:
             logger.info("session_cache_miss", room_id=room_id)
             return await self._rehydrate_from_database(room_id)
 
-        logger.debug("session_cache_hit", room_id=room_id)
-
         raw = json.loads(data)
         session = GameSession(room_id=raw["room_id"])
         # Attach event bus so the domain session can publish sync/state events.

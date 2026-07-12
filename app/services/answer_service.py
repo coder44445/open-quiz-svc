@@ -71,8 +71,10 @@ class AnswerService:
                 room_id=room_id,
                 payload={
                     "player_id": answer.player_id,
+                    "player_name": session.players[answer.player_id].name,
                     "question_id": answer.question_id,
                     "score": score,
+                    "is_correct": (answer.selected_index == current_question.correct_index),
                 },
             )
         )

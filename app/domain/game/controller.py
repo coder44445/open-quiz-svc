@@ -18,7 +18,7 @@ class GameStateController:
 
     ALLOWED_TRANSITIONS: dict[GameState, set[GameState]] = {
         GameState.LOBBY: {GameState.GENERATING},
-        GameState.GENERATING: {GameState.READY, GameState.FINISHED},
+        GameState.GENERATING: {GameState.READY, GameState.IN_PROGRESS, GameState.FINISHED},
         GameState.READY: {GameState.IN_PROGRESS},
         GameState.IN_PROGRESS: {GameState.FINISHED},
         GameState.FINISHED: set(),

@@ -286,17 +286,20 @@ class GameService:
 
         asyncio.create_task(_timeout_task())
 
-    async def start_game(self, room_id: str, count: int = 5) -> GameSession:
+    async def start_game(self, room_id: str, count: int | None = None) -> GameSession:
         """Transition the session to GENERATING and enqueue an AI question-generation job.
 
         Args:
             room_id: Target quiz room.
-            count:   Number of questions to generate.
+            count:   Number of questions to generate (defaults to settings.total_questions).
 
         Raises:
             ValueError: If the session does not exist, is not in LOBBY state,
                         or has no topics.
         """
+        if count is None:
+            from app.core.config import settings
+            count = settings.total_questions
 
         session = await self.store.get(room_id)
 
@@ -366,7 +369,7 @@ class GameService:
             logger.warning("game_begin_failed", room_id=room_id, reason="session_not_found")
             raise ValueError("Session not found")
 
-        if session.state != GameState.READY:
+        if session.state not in (GameState.READY, GameState.GENERATING):
             logger.warning(
                 "game_begin_failed",
                 room_id=room_id,

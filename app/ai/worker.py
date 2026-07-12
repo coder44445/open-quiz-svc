@@ -93,31 +93,50 @@ async def generate_questions(ctx, job_id: str) -> None:
 
         all_questions = []
         max_attempts = 3
+        
+        batch_size = settings.generation_batch_size
+        if batch_size < 1:
+            batch_size = 1
+            
+        generated_count = 0
 
-        # Generate questions one by one for streaming UX.
-        for i in range(job.count):
-            topic = job.topics[i % len(job.topics)]
-            question = None
+        # Generate questions in batches.
+        while generated_count < job.count:
+            current_batch_size = min(batch_size, job.count - generated_count)
+            
+            # Select topics for this batch
+            batch_topics = [
+                job.topics[(generated_count + j) % len(job.topics)]
+                for j in range(current_batch_size)
+            ]
+            
+            batch_questions = None
             
             for attempt in range(1, max_attempts + 1):
                 metrics.mark_attempt()
                 attempt_start = time.perf_counter()
-                log.info("generation_attempt_started", attempt=attempt, question_index=i, topic=topic)
+                log.info("generation_batch_attempt_started", attempt=attempt, start_index=generated_count, batch_size=current_batch_size)
 
                 try:
-                    qs = await engine.generate_questions(
-                        topics=[topic],
+                    batch_questions = await engine.generate_questions(
+                        topics=batch_topics,
                         difficulty=job.difficulty,
-                        count=1,
+                        count=current_batch_size,
                     )
-                    question = qs[0]
-                    # Update ID to match the overall job sequence index (i)
-                    question.id = i
+                    
+                    if len(batch_questions) < current_batch_size:
+                        raise ValueError(f"AI returned {len(batch_questions)} questions, expected {current_batch_size}")
+                        
+                    # Update IDs to match the overall job sequence index
+                    for j, q in enumerate(batch_questions):
+                        q.id = generated_count + j
+                        
                     elapsed_ms = round((time.perf_counter() - attempt_start) * 1000, 2)
                     log.info(
-                        "generation_attempt_succeeded",
+                        "generation_batch_attempt_succeeded",
                         attempt=attempt,
-                        question_index=i,
+                        start_index=generated_count,
+                        batch_size=current_batch_size,
                         elapsed_ms=elapsed_ms,
                     )
                     break
@@ -125,11 +144,11 @@ async def generate_questions(ctx, job_id: str) -> None:
                 except Exception as exc:
                     elapsed_ms = round((time.perf_counter() - attempt_start) * 1000, 2)
                     log.warning(
-                        "generation_attempt_failed",
+                        "generation_batch_attempt_failed",
                         attempt=attempt,
                         error=str(exc),
                         elapsed_ms=elapsed_ms,
-                        question_index=i,
+                        start_index=generated_count,
                     )
 
                     if attempt == max_attempts:
@@ -139,42 +158,54 @@ async def generate_questions(ctx, job_id: str) -> None:
                     log.info("generation_backoff", seconds=backoff, attempt=attempt)
                     await asyncio.sleep(backoff)
 
-            if not question:
-                raise ValueError(f"Failed to generate question {i+1} after {max_attempts} attempts")
+            if not batch_questions:
+                raise ValueError(f"Failed to generate batch starting at {generated_count} after {max_attempts} attempts")
 
-            all_questions.append(question)
-
-            # Persist this specific question immediately
+            # Persist and broadcast the generated batch
             async with UnitOfWork() as uow:
                 match = await uow.matches.get_by_room(job.room_id)
                 if not match:
                     raise ValueError("Match record not found for generated questions")
 
-                q_model = QuestionModel(
-                    match_id=match.id,
-                    order=i,
-                    question_json=dataclasses.asdict(question),
-                )
-                await uow.questions.save_all([q_model])
+                q_models = []
+                for j, q in enumerate(batch_questions):
+                    q_index = generated_count + j
+                    q_models.append(QuestionModel(
+                        match_id=match.id,
+                        order=q_index,
+                        question_json=dataclasses.asdict(q),
+                    ))
+                await uow.questions.save_all(q_models)
             
-            log.info("question_persisted", question_index=i)
+            for j, q in enumerate(batch_questions):
+                q_index = generated_count + j
+                all_questions.append(q)
+                log.info("question_persisted", question_index=q_index)
 
-            # Notify clients that one question is ready
-            progress = int(10 + ((i + 1) / job.count) * 80)
-            await event_bus.publish(
-                GameEvent(
-                    type=EventType.QUESTION_READY,
-                    room_id=job.room_id,
-                    payload={"job_id": job.job_id, "question": dataclasses.asdict(question), "index": i}
+                # Notify clients that one question is ready
+                progress = int(10 + ((q_index + 1) / job.count) * 80)
+                await event_bus.publish(
+                    GameEvent(
+                        type=EventType.QUESTION_READY,
+                        room_id=job.room_id,
+                        payload={"job_id": job.job_id, "question": dataclasses.asdict(q), "index": q_index}
+                    )
                 )
-            )
-            await event_bus.publish(
-                GameEvent(
-                    type=EventType.JOB_PROGRESS,
-                    room_id=job.room_id,
-                    payload={"job_id": job.job_id, "progress": progress}
+                await event_bus.publish(
+                    GameEvent(
+                        type=EventType.JOB_PROGRESS,
+                        room_id=job.room_id,
+                        payload={"job_id": job.job_id, "progress": progress}
+                    )
                 )
-            )
+                
+            # Update the session with the questions generated so far so GameLoop can consume them
+            session = await session_store.get(job.room_id)
+            if session:
+                session.questions = list(all_questions)  # copy current state
+                await session_store.save(session)
+                
+            generated_count += current_batch_size
 
         # Update the match state to READY now that all questions are generated
         async with UnitOfWork() as uow:
@@ -186,9 +217,10 @@ async def generate_questions(ctx, job_id: str) -> None:
         session = await session_store.get(job.room_id)
         if session:
             session.questions = all_questions
-            session.set_state(GameState.READY)
+            if session.state == GameState.GENERATING:
+                session.set_state(GameState.READY)
+                log.info("session_state_updated", state=GameState.READY.value)
             await session_store.save(session)
-            log.info("session_state_updated", state=GameState.READY.value)
         else:
             log.warning("session_not_found_after_generation")
 
