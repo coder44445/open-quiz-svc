@@ -1,5 +1,6 @@
 class EventType:
     PLAYER_JOINED = "player_joined"
+    PLAYER_LEFT = "player_left"
     TOPIC_ADDED = "topic_added"
 
     # Topic collection: server requests topics from randomly selected players.

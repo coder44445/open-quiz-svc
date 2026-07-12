@@ -27,6 +27,10 @@ class AnswerEvent(BaseClientEvent):
 class RejoinEvent(BaseClientEvent):
     type: Literal["rejoin"] = "rejoin"
 
+class ForceStartEvent(BaseClientEvent):
+    """Host forces game to start with whatever topics have been collected so far."""
+    type: Literal["force_start"] = "force_start"
+
 # A discriminated union based on the "type" field
 ClientEventPayload = Annotated[
     Union[
@@ -36,6 +40,7 @@ ClientEventPayload = Annotated[
         BeginEvent,
         AnswerEvent,
         RejoinEvent,
+        ForceStartEvent,
     ],
     Field(discriminator="type")
 ]

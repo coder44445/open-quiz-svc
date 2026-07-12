@@ -11,15 +11,19 @@ from app.domain.player.model import Player
 from app.domain.game.answer import Answer
 from app.services.game_service import GameService
 from app.services.answer_service import AnswerService
+from app.infrastructure.events.event_bus import GameEventBus
+from app.domain.events import GameEvent
+from app.domain.event_types import EventType
 from app.websocket.schemas import (
-    JoinEvent, TopicEvent, StartEvent, BeginEvent, AnswerEvent, RejoinEvent
+    JoinEvent, TopicEvent, StartEvent, BeginEvent, AnswerEvent, RejoinEvent, ForceStartEvent
 )
 
 logger = structlog.get_logger(__name__)
 
-# Create static service instances (like router.py did)
+# Create static service instances
 game_service = GameService()
 answer_service = AnswerService()
+event_bus = GameEventBus()
 
 # Module-level registry of running game loop tasks keyed by room_id.
 # This ensures only one loop runs per room regardless of which client
@@ -60,10 +64,42 @@ class WebSocketEventHandlers:
     async def handle_topic(ctx: ConnectionContext, payload: TopicEvent) -> None:
         await game_service.add_topic(ctx.room_id, payload.text, ctx.player_id)
 
-        await ctx.websocket.send_json({
-            "type": "topic_added",
-            "topic": payload.text,
-        })
+        # Broadcast to ALL clients in the room so everyone sees the topic appear.
+        await event_bus.publish(GameEvent(
+            type=EventType.TOPIC_ADDED,
+            room_id=ctx.room_id,
+            payload={"topic": payload.text},
+        ))
+
+    @staticmethod
+    async def handle_force_start(ctx: ConnectionContext, payload: ForceStartEvent) -> None:
+        """Host manually triggers game start with whatever topics exist so far."""
+        session = await game_service.get_session(ctx.room_id)
+        if not session:
+            ctx.log.warning("force_start_ignored_no_session")
+            return
+
+        from app.domain.game.state import GameState
+        if session.state != GameState.LOBBY:
+            ctx.log.warning("force_start_ignored_wrong_state", state=session.state.value)
+            return
+
+        # Clear pending list so the auto-start guard doesn't block us
+        session.pending_topic_submitters = []
+        if not session.topics:
+            session.topics = ["General Knowledge"]
+        from app.infrastructure.redis.session_repository import SessionRepository
+        await SessionRepository().save(session)
+
+        await event_bus.publish(GameEvent(
+            type=EventType.TOPICS_COLLECTED,
+            room_id=ctx.room_id,
+            payload={"pending_remaining": 0, "forced": True},
+        ))
+        try:
+            await game_service.start_game(ctx.room_id)
+        except Exception as e:
+            ctx.log.warning("force_start_failed", error=str(e))
 
     @staticmethod
     async def handle_start(ctx: ConnectionContext, payload: StartEvent) -> None:

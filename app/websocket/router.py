@@ -13,9 +13,9 @@ from app.core.logging import logger
 from app.websocket.event_gateway import EventGateway
 from app.websocket.schemas import (
     ClientEventAdapter, JoinEvent, TopicEvent, StartEvent, 
-    BeginEvent, AnswerEvent, RejoinEvent
+    BeginEvent, AnswerEvent, RejoinEvent, ForceStartEvent
 )
-from app.websocket.handlers import ConnectionContext, WebSocketEventHandlers
+from app.websocket.handlers import ConnectionContext, WebSocketEventHandlers, game_service
 
 router = APIRouter()
 event_gateway = EventGateway()
@@ -70,6 +70,8 @@ async def websocket_room(websocket: WebSocket, room_id: str) -> None:
                 await WebSocketEventHandlers.handle_topic(ctx, payload)
             elif isinstance(payload, StartEvent):
                 await WebSocketEventHandlers.handle_start(ctx, payload)
+            elif isinstance(payload, ForceStartEvent):
+                await WebSocketEventHandlers.handle_force_start(ctx, payload)
             elif isinstance(payload, BeginEvent):
                 await WebSocketEventHandlers.handle_begin(ctx, payload)
             elif isinstance(payload, AnswerEvent):
@@ -81,6 +83,12 @@ async def websocket_room(websocket: WebSocket, room_id: str) -> None:
 
     except WebSocketDisconnect:
         ctx.log.info("websocket_client_disconnected")
+        # Remove player from session and notify remaining players.
+        if ctx.player_id:
+            try:
+                await game_service.remove_player(ctx.room_id, ctx.player_id)
+            except Exception:
+                ctx.log.exception("remove_player_error")
         # Cancel the loop task if the host disconnects mid-game.
         if ctx.loop_task and not ctx.loop_task.done():
             ctx.loop_task.cancel()

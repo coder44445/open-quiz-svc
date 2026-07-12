@@ -91,6 +91,20 @@ class GameService:
             player_count=len(session.players),
         )
 
+        # Broadcast updated player list to all connected clients
+        await event_bus.publish(GameEvent(
+            type=EventType.PLAYER_JOINED,
+            room_id=room_id,
+            payload={
+                "player_id": player.id,
+                "player_name": player.name,
+                "players": [
+                    {"id": p.id, "name": p.name, "score": p.score}
+                    for p in session.players.values()
+                ],
+            },
+        ))
+
         if session.match_id is not None:
             async with self.uow_factory() as uow:
                 existing = await uow.players.get(player.id)
@@ -109,11 +123,51 @@ class GameService:
                         )
                     )
 
+    async def remove_player(self, room_id: str, player_id: str) -> None:
+        """Remove a player from the session on disconnect and broadcast the updated list."""
+        session = await self.store.get(room_id)
+        if not session or player_id not in session.players:
+            return
+
+        player_name = session.players[player_id].name
+        del session.players[player_id]
+
+        # Also remove from pending topic submitters if they disconnect mid-collection
+        if player_id in session.pending_topic_submitters:
+            session.pending_topic_submitters.remove(player_id)
+
+        await self.store.save(session)
+        logger.info("player_removed", room_id=room_id, player_id=player_id)
+
+        await event_bus.publish(GameEvent(
+            type=EventType.PLAYER_LEFT,
+            room_id=room_id,
+            payload={
+                "player_id": player_id,
+                "player_name": player_name,
+                "players": [
+                    {"id": p.id, "name": p.name, "score": p.score}
+                    for p in session.players.values()
+                ],
+            },
+        ))
+
+        # If their disconnect emptied the pending list, auto-start if we were collecting
+        if (
+            session.chosen_topic_submitters
+            and not session.pending_topic_submitters
+            and session.state == GameState.LOBBY
+            and session.topics
+        ):
+            logger.info("pending_empty_after_disconnect_auto_starting", room_id=room_id)
+            await self.start_game(room_id)
+
+
     async def add_topic(self, room_id: str, topic: str, player_id: str | None = None) -> None:
         """Append a topic to the session's topic list.
 
-        Creates the session if it does not exist yet (host may send topics
-        before any player has joined).
+        During topic collection: each chosen player can submit exactly one topic.
+        Outside of collection: topics can be added freely (legacy / admin path).
         """
 
         session = await self.store.get(room_id)
@@ -122,12 +176,27 @@ class GameService:
             logger.info("session_missing_for_topic_add", room_id=room_id)
             session = await self.create_session(room_id)
 
+        # --- Enforce one-topic-per-player during collection phase ---
+        if player_id and session.chosen_topic_submitters:
+            if player_id not in session.pending_topic_submitters:
+                # This player was either not chosen or already submitted
+                logger.warning(
+                    "topic_rejected_already_submitted",
+                    room_id=room_id,
+                    player_id=player_id,
+                )
+                return  # silently drop — frontend already hid the input
+
+        topic = topic.strip()
+        if not topic:
+            return
+
         session.add_topic(topic)
-        
-        # Topic collection flow tracking
+
+        # Topic collection flow: mark player as done
         if player_id and player_id in session.pending_topic_submitters:
             session.pending_topic_submitters.remove(player_id)
-            
+
         await self.store.save(session)
         logger.info(
             "topic_added",
@@ -138,21 +207,38 @@ class GameService:
         )
 
         # If we were collecting topics and everyone submitted, auto-start
-        if session.chosen_topic_submitters and not session.pending_topic_submitters and session.state == GameState.LOBBY:
+        if (
+            session.chosen_topic_submitters
+            and not session.pending_topic_submitters
+            and session.state == GameState.LOBBY
+        ):
             logger.info("all_topics_collected_auto_starting", room_id=room_id)
-            # We notify clients that collection is done
             await event_bus.publish(GameEvent(
                 type=EventType.TOPICS_COLLECTED,
                 room_id=room_id,
-                payload={}
+                payload={"pending_remaining": 0},
             ))
-            await self.start_game(room_id)
+            try:
+                await self.start_game(room_id)
+            except Exception as e:
+                logger.error("auto_start_failed", room_id=room_id, error=str(e))
+        elif session.pending_topic_submitters:
+            # Broadcast progress so host can see how many still need to submit
+            await event_bus.publish(GameEvent(
+                type=EventType.TOPICS_COLLECTED,
+                room_id=room_id,
+                payload={"pending_remaining": len(session.pending_topic_submitters)},
+            ))
 
     async def request_topics(self, room_id: str) -> None:
         """Pick random players to submit topics, and start a 30s timeout."""
         session = await self.store.get(room_id)
         if not session or session.state != GameState.LOBBY:
             raise ValueError("Can only request topics from LOBBY")
+
+        # Guard: don't restart collection if already in progress
+        if session.chosen_topic_submitters:
+            raise ValueError("Topic collection is already in progress")
 
         n = min(5, len(session.players))
         if n == 0:
@@ -165,13 +251,21 @@ class GameService:
         
         logger.info("topics_requested", room_id=room_id, chosen_count=n)
 
-        # Broadcast per-player events
+        # Broadcast per-player topic request events
         for player in chosen:
             await event_bus.publish(GameEvent(
                 type=EventType.TOPIC_REQUEST,
                 room_id=room_id,
                 payload={"player_id": player.id}
             ))
+
+        # Immediately tell ALL clients how many players were chosen so the
+        # host's pending count is accurate from the start (not stale/optimistic).
+        await event_bus.publish(GameEvent(
+            type=EventType.TOPICS_COLLECTED,
+            room_id=room_id,
+            payload={"pending_remaining": n},
+        ))
 
         # Start 30s timeout task
         async def _timeout_task():
@@ -231,6 +325,13 @@ class GameService:
             topic_count=len(session.topics),
             requested_question_count=count,
         )
+
+        # Notify all clients that generation is starting
+        await event_bus.publish(GameEvent(
+            type=EventType.GAME_STATE_CHANGED,
+            room_id=room_id,
+            payload={"from": GameState.LOBBY.value, "to": GameState.GENERATING.value},
+        ))
 
         # Mirror the state change to the durable match record.
         async with self.uow_factory() as uow:
