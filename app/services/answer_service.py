@@ -10,6 +10,7 @@ from app.infrastructure.database.models.player import Player as PlayerModel
 from app.infrastructure.redis.session_repository import SessionRepository
 from app.domain.events import GameEvent
 from app.domain.event_types import EventType
+from app.domain.game.state import GameState
 from app.infrastructure.events.event_bus import GameEventBus
 
 
@@ -28,7 +29,7 @@ class AnswerService:
             logger.warning("answer_submission_failed", room_id=room_id, reason="session_not_found")
             raise ValueError("Session not found")
 
-        if session.state != session.state.IN_PROGRESS:
+        if session.state != GameState.IN_PROGRESS:
             logger.warning("answer_submission_failed", room_id=room_id, reason="game_not_in_progress", state=session.state.name)
             raise ValueError("Game is not in progress")
 
@@ -37,10 +38,6 @@ class AnswerService:
             logger.warning("answer_submission_failed", room_id=room_id, reason="question_mismatch", question_id=answer.question_id)
             raise ValueError("Answer does not match current question")
 
-        key = f"idempotency:answer:{room_id}:{answer.question_id}:{answer.player_id}"
-        if await redis.get(key):
-            logger.warning("answer_submission_failed", room_id=room_id, reason="duplicate_answer", player_id=answer.player_id)
-            raise ValueError("Duplicate answer")
 
         accepted = session.submit_answer(answer)
         if not accepted:
@@ -67,7 +64,6 @@ class AnswerService:
             )
             await uow.answers.save(answer_record)
 
-        await redis.set(key, "1", ex=60 * 5)
 
         await self.event_bus.publish(
             GameEvent(
@@ -86,6 +82,13 @@ class AnswerService:
             room_id=room_id,
             player_id=answer.player_id,
             question_id=answer.question_id,
+            selected_index=answer.selected_index,
+            correct_index=current_question.correct_index,
+            selected_text=current_question.options[answer.selected_index] if 0 <= answer.selected_index < len(current_question.options) else "N/A",
+            correct_text=current_question.options[current_question.correct_index] if 0 <= current_question.correct_index < len(current_question.options) else "N/A",
+            is_correct=(answer.selected_index == current_question.correct_index),
+            time_taken=answer.time_taken,
+            time_limit=session.time_limit,
             score=score,
         )
         return score
