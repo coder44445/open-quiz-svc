@@ -24,3 +24,4 @@ class EventType:
 
     ANSWER_RECEIVED = "answer_received"
     GAME_FINISHED = "game_finished"
+    CHAT_MESSAGE = "chat_message"

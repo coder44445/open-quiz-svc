@@ -15,7 +15,7 @@ from app.infrastructure.events.event_bus import GameEventBus
 from app.domain.events import GameEvent
 from app.domain.event_types import EventType
 from app.websocket.schemas import (
-    JoinEvent, TopicEvent, StartEvent, BeginEvent, AnswerEvent, RejoinEvent, ForceStartEvent
+    JoinEvent, TopicEvent, StartEvent, BeginEvent, AnswerEvent, RejoinEvent, ForceStartEvent, ChatEvent
 )
 
 logger = structlog.get_logger(__name__)
@@ -169,8 +169,16 @@ class WebSocketEventHandlers:
     async def handle_rejoin(ctx: ConnectionContext, payload: RejoinEvent) -> None:
         session = await game_service.get_session(ctx.room_id)
         if not session:
-            ctx.log.warning("rejoin_ignored_no_session", player_id=ctx.player_id)
+            ctx.log.warning("rejoin_ignored_no_session", player_id=payload.player_id)
             return
+
+        if payload.player_id not in session.players:
+            ctx.log.warning("rejoin_ignored_player_not_found", player_id=payload.player_id)
+            return
+
+        # Restore context identity
+        ctx.player_id = payload.player_id
+        ctx.log = ctx.log.bind(player_id=ctx.player_id)
 
         question = session.get_current_question()
         remaining = session.time_limit - (
@@ -198,3 +206,28 @@ class WebSocketEventHandlers:
                 for p in session.players.values()
             ],
         })
+
+    @staticmethod
+    async def handle_chat(ctx: ConnectionContext, payload: ChatEvent) -> None:
+        session = await game_service.get_session(ctx.room_id)
+        if not session:
+            return
+
+        player_name = session.players[ctx.player_id].name if ctx.player_id in session.players else "Unknown"
+
+        from app.domain.event_types import EventType
+        from app.domain.events import GameEvent
+        from app.infrastructure.events.event_bus import GameEventBus
+
+        bus = GameEventBus()
+        await bus.publish(
+            GameEvent(
+                type=EventType.CHAT_MESSAGE,
+                room_id=ctx.room_id,
+                payload={
+                    "player_id": ctx.player_id,
+                    "player_name": player_name,
+                    "message": payload.message,
+                },
+            )
+        )
