@@ -94,7 +94,7 @@ class GameService:
         return await self.store.get(room_id)
 
     async def add_player(self, room_id: str, player: Player) -> None:
-        """Add a player to a room, creating the session if it does not exist yet.
+        """Add a player to a room.
 
         Also upserts the Player and MatchPlayer rows in the database so the
         player record is durable even if Redis is flushed.
@@ -103,8 +103,8 @@ class GameService:
         session = await self.store.get(room_id)
 
         if not session:
-            logger.info("session_missing_for_player_join", room_id=room_id)
-            session = await self.create_session(room_id)
+            logger.warning("session_missing_for_player_join", room_id=room_id)
+            raise ValueError("Room does not exist")
 
         session.add_player(player)
         await self.store.save(session)
@@ -204,8 +204,8 @@ class GameService:
         session = await self.store.get(room_id)
 
         if not session:
-            logger.info("session_missing_for_topic_add", room_id=room_id)
-            session = await self.create_session(room_id)
+            logger.warning("session_missing_for_topic_add", room_id=room_id)
+            raise ValueError("Room does not exist")
 
         # --- Enforce one-topic-per-player during collection phase ---
         if player_id and session.chosen_topic_submitters:

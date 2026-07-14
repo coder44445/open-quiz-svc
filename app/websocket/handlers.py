@@ -50,7 +50,12 @@ class WebSocketEventHandlers:
     @staticmethod
     async def handle_join(ctx: ConnectionContext, payload: JoinEvent) -> None:
         player = Player(name=payload.user)
-        await game_service.add_player(ctx.room_id, player)
+        try:
+            await game_service.add_player(ctx.room_id, player)
+        except ValueError as exc:
+            ctx.log.warning("join_rejected", reason=str(exc))
+            await ctx.websocket.send_json({"type": "error", "message": str(exc)})
+            return
 
         ctx.player_id = player.id
         ctx.log = ctx.log.bind(player_id=ctx.player_id)
@@ -62,7 +67,11 @@ class WebSocketEventHandlers:
 
     @staticmethod
     async def handle_topic(ctx: ConnectionContext, payload: TopicEvent) -> None:
-        await game_service.add_topic(ctx.room_id, payload.text, ctx.player_id)
+        try:
+            await game_service.add_topic(ctx.room_id, payload.text, ctx.player_id)
+        except ValueError as exc:
+            ctx.log.warning("topic_rejected", reason=str(exc))
+            return
 
         # Broadcast to ALL clients in the room so everyone sees the topic appear.
         await event_bus.publish(GameEvent(
