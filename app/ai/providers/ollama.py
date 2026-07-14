@@ -65,14 +65,16 @@ class OllamaProvider:
                 - NEVER include markdown, explanations, reasoning, or any text outside the JSON.
                 - Each object must contain exactly these fields:
                 - question (string)
-                - options (array of exactly 4 meaningful strings)
-                - correct_index (integer from 0 to 3, where 0 is the first option, 1 is the second, etc.)
+                - options (array of strings)
+                - correct_index (integer matching the correct option's index)
                 - topic (string)
                 - difficulty (string)
 
                 Rules:
                 - Exactly one correct answer.
-                - Options must be meaningful and correspond to the question.
+                - Most questions should be multiple choice with exactly 4 options.
+                - About 15% to 25% of the questions should be True/False questions.
+                - For True/False questions, the options array MUST be exactly ["True", "False"] and correct_index must be 0 or 1.
                 - topic must equal "{topic_str}".
                 - difficulty must equal "{difficulty.value}".
 
