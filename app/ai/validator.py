@@ -19,6 +19,15 @@ class GeneratedQuestionSchema(BaseModel):
     def validate_correct_index(self) -> "GeneratedQuestionSchema":
         if not (0 <= self.correct_index < len(self.options)):
             raise ValueError(f"correct_index {self.correct_index} is out of bounds for options")
+        
+        # Enforce True/False strictness
+        if len(self.options) == 2:
+            if [o.lower() for o in self.options] != ["true", "false"]:
+                raise ValueError("If a question has 2 options, they must be 'True' and 'False'.")
+        # Enforce MCQ strictness
+        elif len(self.options) != 4:
+            raise ValueError(f"Questions must have either 2 options (True/False) or 4 options (MCQ), got {len(self.options)}")
+            
         return self
 
 
