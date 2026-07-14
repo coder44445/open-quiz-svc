@@ -123,6 +123,7 @@ class GameService:
             payload={
                 "player_id": player.id,
                 "player_name": player.name,
+                "host_id": session.host_id,
                 "players": [
                     {"id": p.id, "name": p.name, "score": p.score}
                     for p in session.players.values()
@@ -168,6 +169,10 @@ class GameService:
             await self.store.delete(room_id)
             logger.info("session_cleaned_up_empty_room", room_id=room_id)
         else:
+            if session.host_id == player_id:
+                session.host_id = next(iter(session.players.values())).id
+                logger.info("host_migrated", room_id=room_id, new_host_id=session.host_id)
+
             await self.store.save(session)
             
             await event_bus.publish(GameEvent(
@@ -176,6 +181,7 @@ class GameService:
                 payload={
                     "player_id": player_id,
                     "player_name": player_name,
+                    "host_id": session.host_id,
                     "players": [
                         {"id": p.id, "name": p.name, "score": p.score}
                         for p in session.players.values()

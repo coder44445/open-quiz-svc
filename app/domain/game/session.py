@@ -33,6 +33,7 @@ class GameSession:
     match_id: int | None = None
 
     players: dict[str, Player] = field(default_factory=dict)
+    host_id: str | None = None
     topics: list[str] = field(default_factory=list)
     chosen_topic_submitters: list[str] = field(default_factory=list)
     pending_topic_submitters: list[str] = field(default_factory=list)
@@ -52,6 +53,8 @@ class GameSession:
 
     def add_player(self, player: Player) -> None:
         """Register a player in this session."""
+        if not self.players:
+            self.host_id = player.id
         self.players[player.id] = player
 
     def add_topic(self, topic: str) -> None:

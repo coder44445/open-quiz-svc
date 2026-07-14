@@ -49,7 +49,7 @@ class WebSocketEventHandlers:
 
     @staticmethod
     async def handle_join(ctx: ConnectionContext, payload: JoinEvent) -> None:
-        player = Player(name=payload.user)
+        player = Player(name=payload.user.title())
         try:
             await game_service.add_player(ctx.room_id, player)
         except ValueError as exc:
