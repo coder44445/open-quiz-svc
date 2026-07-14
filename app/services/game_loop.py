@@ -220,7 +220,6 @@ class GameLoop:
             match.finished_at = datetime.now(timezone.utc)
             match.total_players = len(session.players)
             match.total_questions = len(session.questions)
-            match.leaderboard = [asdict(p) for p in session.get_leaderboard()]
 
         logger.info("game_finished", room_id=room_id, player_count=len(session.players))
         return result

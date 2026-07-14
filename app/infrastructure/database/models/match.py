@@ -24,5 +24,3 @@ class Match(Base):
 
     total_players: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     total_questions: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-
-    leaderboard: Mapped[dict] = mapped_column(JSON, default=list, nullable=False)
