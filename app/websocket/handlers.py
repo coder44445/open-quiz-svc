@@ -182,21 +182,9 @@ class WebSocketEventHandlers:
             return
 
         if payload.player_id not in session.players:
-            ctx.log.info("rejoin_debug", state=session.state.value, user=payload.user)
-            if session.state.value in ["lobby", "generating", "ready"] and payload.user:
-                # The player was evicted because they temporarily disconnected in the lobby. Let's add them back!
-                player = Player(id=payload.player_id, name=payload.user.title())
-                try:
-                    await game_service.add_player(ctx.room_id, player)
-                    session = await game_service.get_session(ctx.room_id) # Refresh session
-                except ValueError as exc:
-                    ctx.log.warning("rejoin_add_player_rejected", reason=str(exc))
-                    await ctx.websocket.send_json({"type": "error", "message": str(exc)})
-                    return
-            else:
-                ctx.log.warning("rejoin_ignored_player_not_found", player_id=payload.player_id)
-                await ctx.websocket.send_json({"type": "error", "message": "Session expired or game already started."})
-                return
+            ctx.log.warning("rejoin_ignored_player_not_found", player_id=payload.player_id)
+            await ctx.websocket.send_json({"type": "error", "message": "Session expired or player removed."})
+            return
 
         # Restore context identity
         ctx.player_id = payload.player_id

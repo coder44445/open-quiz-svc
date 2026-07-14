@@ -169,10 +169,6 @@ class GameService:
             await self.store.delete(room_id)
             logger.info("session_cleaned_up_empty_room", room_id=room_id)
         else:
-            if session.host_id == player_id:
-                session.host_id = next(iter(session.players.values())).id
-                logger.info("host_migrated", room_id=room_id, new_host_id=session.host_id)
-
             await self.store.save(session)
             
             await event_bus.publish(GameEvent(

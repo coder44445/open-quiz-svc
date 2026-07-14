@@ -34,7 +34,6 @@ class GameSession:
 
     players: dict[str, Player] = field(default_factory=dict)
     host_id: str | None = None
-    original_host_id: str | None = None
     topics: list[str] = field(default_factory=list)
     chosen_topic_submitters: list[str] = field(default_factory=list)
     pending_topic_submitters: list[str] = field(default_factory=list)
@@ -55,11 +54,6 @@ class GameSession:
     def add_player(self, player: Player) -> None:
         """Register a player in this session."""
         if not self.players:
-            self.host_id = player.id
-            if not self.original_host_id:
-                self.original_host_id = player.id
-        elif self.original_host_id == player.id:
-            # The original host came back, give them their host powers back!
             self.host_id = player.id
 
         self.players[player.id] = player
