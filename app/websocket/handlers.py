@@ -215,12 +215,7 @@ class WebSocketEventHandlers:
 
         player_name = session.players[ctx.player_id].name if ctx.player_id in session.players else "Unknown"
 
-        from app.domain.event_types import EventType
-        from app.domain.events import GameEvent
-        from app.infrastructure.events.event_bus import GameEventBus
-
-        bus = GameEventBus()
-        await bus.publish(
+        await event_bus.publish(
             GameEvent(
                 type=EventType.CHAT_MESSAGE,
                 room_id=ctx.room_id,
