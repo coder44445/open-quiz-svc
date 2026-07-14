@@ -56,6 +56,7 @@ class AnswerService:
                 await uow.players.save(player)
 
             answer_record = AnswerModel(
+                match_id=session.match_id,
                 question_id=answer.question_id,
                 player_id=answer.player_id,
                 selected_option=answer.selected_index,
