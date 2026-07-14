@@ -29,14 +29,9 @@ import app.infrastructure.database.models
 # Metadata used for autogenerate migrations
 target_metadata = Base.metadata
 
-def _normalize_database_url(url: str) -> str:
-    if url.startswith("sqlite:///") and not url.startswith("sqlite+aiosqlite://"):
-        return url.replace("sqlite:///", "sqlite+aiosqlite:///", 1)
-    return url
-
-# Get database URL from environment or alembic.ini
-database_url = os.environ.get("DATABASE_URL") or config.get_main_option("sqlalchemy.url")
-database_url = _normalize_database_url(database_url)
+# Import settings to get the database URL directly from .env
+from app.core.config import settings
+database_url = settings.database_url
 
 # Ensure Alembic uses the same database URL
 config.set_main_option("sqlalchemy.url", database_url)
