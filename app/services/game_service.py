@@ -64,6 +64,31 @@ class GameService:
         )
         return session
 
+    async def create_unique_session(self) -> str:
+        import secrets
+        from sqlalchemy.exc import IntegrityError
+        
+        adjectives = ["swift", "brave", "mighty", "clever", "silent", "wild", "fast", "cool", "epic", "bold", "dark", "light", "super", "hyper", "mega", "ultra", "neon", "cyber", "cosmic", "stellar", "quantum", "magic", "mystic"]
+        nouns = ["fox", "bear", "wolf", "hawk", "lion", "tiger", "eagle", "shark", "ninja", "robot", "dragon", "wizard", "knight", "ghost", "viper", "cobra", "falcon", "raven", "panther", "lynx", "griffin", "phoenix"]
+        
+        for _ in range(5):
+            adj = secrets.choice(adjectives)
+            noun = secrets.choice(nouns)
+            num = secrets.choice(range(100))
+            room_id = f"{adj}-{noun}-{num}"
+            
+            try:
+                # We attempt to create the session in the DB using the regular create_session method,
+                # but we need to catch the DB exception. Since create_session manages its own uow,
+                # if an IntegrityError occurs, it will bubble up here and the uow will have rolled back safely.
+                await self.create_session(room_id)
+                return room_id
+            except IntegrityError:
+                logger.warning("room_id_collision", room_id=room_id)
+                continue
+                
+        raise RuntimeError("Failed to generate a unique room ID after 5 attempts")
+
     async def get_session(self, room_id: str) -> GameSession | None:
         """Return the active session for a room, or None if it does not exist."""
         return await self.store.get(room_id)
@@ -136,31 +161,37 @@ class GameService:
         if player_id in session.pending_topic_submitters:
             session.pending_topic_submitters.remove(player_id)
 
-        await self.store.save(session)
         logger.info("player_removed", room_id=room_id, player_id=player_id)
 
-        await event_bus.publish(GameEvent(
-            type=EventType.PLAYER_LEFT,
-            room_id=room_id,
-            payload={
-                "player_id": player_id,
-                "player_name": player_name,
-                "players": [
-                    {"id": p.id, "name": p.name, "score": p.score}
-                    for p in session.players.values()
-                ],
-            },
-        ))
+        if not session.players:
+            # Cleanup: Game is dead, delete the session data to prevent memory leaks and DB clutter.
+            await self.store.delete(room_id)
+            logger.info("session_cleaned_up_empty_room", room_id=room_id)
+        else:
+            await self.store.save(session)
+            
+            await event_bus.publish(GameEvent(
+                type=EventType.PLAYER_LEFT,
+                room_id=room_id,
+                payload={
+                    "player_id": player_id,
+                    "player_name": player_name,
+                    "players": [
+                        {"id": p.id, "name": p.name, "score": p.score}
+                        for p in session.players.values()
+                    ],
+                },
+            ))
 
-        # If their disconnect emptied the pending list, auto-start if we were collecting
-        if (
-            session.chosen_topic_submitters
-            and not session.pending_topic_submitters
-            and session.state == GameState.LOBBY
-            and session.topics
-        ):
-            logger.info("pending_empty_after_disconnect_auto_starting", room_id=room_id)
-            await self.start_game(room_id)
+            # If their disconnect emptied the pending list, auto-start if we were collecting
+            if (
+                session.chosen_topic_submitters
+                and not session.pending_topic_submitters
+                and session.state == GameState.LOBBY
+                and session.topics
+            ):
+                logger.info("pending_empty_after_disconnect_auto_starting", room_id=room_id)
+                await self.start_game(room_id)
 
 
     async def add_topic(self, room_id: str, topic: str, player_id: str | None = None) -> None:

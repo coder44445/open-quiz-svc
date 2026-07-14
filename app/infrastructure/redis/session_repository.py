@@ -39,7 +39,9 @@ class SessionRepository:
         """Serialise and persist session state to Redis."""
 
         key = f"session:{session.room_id}"
-        await self.redis.set(key, json.dumps(self._serialize(session)))
+        # Set a 2-hour TTL. Active games will constantly refresh this TTL on state changes.
+        # This prevents Redis memory leaks if the server crashes and remove_player isn't called.
+        await self.redis.set(key, json.dumps(self._serialize(session)), ex=7200)
         logger.debug("session_saved", room_id=session.room_id, state=session.state.value)
 
     async def get(self, room_id: str) -> GameSession | None:
