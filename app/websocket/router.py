@@ -85,9 +85,17 @@ async def websocket_room(websocket: WebSocket, room_id: str) -> None:
 
     except WebSocketDisconnect:
         ctx.log.info("websocket_client_disconnected")
-        # Do not remove the player from the session! This allows them to reconnect and restore their state.
-        # The Redis TTL on the session will eventually clean up the room if abandoned.
-        # We purposely leave ctx.loop_task running so the game doesn't pause if the host refreshes.
+        
+        # If the game hasn't started yet, remove the player from the lobby completely
+        if ctx.player_id:
+            try:
+                session = await game_service.get_session(room_id)
+                if session and session.state.value == "lobby":
+                    await game_service.remove_player(room_id, ctx.player_id)
+            except Exception as e:
+                ctx.log.warning("failed_to_remove_player_on_disconnect", error=str(e))
+                
+        # We purposely leave ctx.loop_task running so the game doesn't pause if the host refreshes during gameplay.
 
     except Exception:
         ctx.log.exception("websocket_unhandled_error")
