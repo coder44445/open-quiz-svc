@@ -21,6 +21,19 @@ router = APIRouter()
 event_gateway = EventGateway()
 
 
+# Map event types to their corresponding handler functions
+EVENT_HANDLERS = {
+    JoinEvent: WebSocketEventHandlers.handle_join,
+    TopicEvent: WebSocketEventHandlers.handle_topic,
+    StartEvent: WebSocketEventHandlers.handle_start,
+    ForceStartEvent: WebSocketEventHandlers.handle_force_start,
+    BeginEvent: WebSocketEventHandlers.handle_begin,
+    AnswerEvent: WebSocketEventHandlers.handle_answer,
+    RejoinEvent: WebSocketEventHandlers.handle_rejoin,
+    ChatEvent: WebSocketEventHandlers.handle_chat,
+}
+
+
 @router.websocket("/ws/{room_id}")
 async def websocket_room(websocket: WebSocket, room_id: str) -> None:
     """Handle all WebSocket traffic for a single quiz room.
@@ -48,18 +61,6 @@ async def websocket_room(websocket: WebSocket, room_id: str) -> None:
     # Create connection context
     ctx = ConnectionContext(room_id=room_id, websocket=websocket)
     ctx.log.info("websocket_client_connected")
-
-    # Map event types to their corresponding handler functions
-    EVENT_HANDLERS = {
-        JoinEvent: WebSocketEventHandlers.handle_join,
-        TopicEvent: WebSocketEventHandlers.handle_topic,
-        StartEvent: WebSocketEventHandlers.handle_start,
-        ForceStartEvent: WebSocketEventHandlers.handle_force_start,
-        BeginEvent: WebSocketEventHandlers.handle_begin,
-        AnswerEvent: WebSocketEventHandlers.handle_answer,
-        RejoinEvent: WebSocketEventHandlers.handle_rejoin,
-        ChatEvent: WebSocketEventHandlers.handle_chat,
-    }
 
     try:
         while True:
