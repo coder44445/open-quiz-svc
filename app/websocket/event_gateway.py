@@ -15,41 +15,44 @@ logger = structlog.get_logger(__name__)
 class EventGateway:
     """Listens to Redis Pub/Sub and forwards events to WebSocket clients.
 
-    One subscription is created per room per connected client.  All active
-    WebSocket connections for a room are tracked in ``self.connections`` so
-    that a single Pub/Sub message is fanned out to every subscriber.
+    Maintains exactly ONE Redis Pub/Sub subscription per room, regardless of
+    how many WebSocket clients are connected to that room. When a message is
+    received from Redis, it fans out (broadcasts) to all active WebSockets.
     """
 
     def __init__(self) -> None:
-        # Maps room_id → set of active WebSocket connections.
-        self.connections: dict[str, set] = {}
+        self.connections: dict[str, set[WebSocket]] = {}
+        self.tasks: dict[str, asyncio.Task] = {}
 
-    async def subscribe(self, room_id: str, websocket: WebSocket) -> None:
-        """Subscribe to room events and forward them to the given WebSocket.
-
-        Starts listening on the Redis channel ``events:room:<room_id>`` and
-        calls ``broadcast`` for every message that arrives.  Returns when the
-        Pub/Sub connection is closed (e.g. on WebSocket disconnect or Redis
-        error).
-
-        Args:
-            room_id:   The quiz room to subscribe to.
-            websocket: The client WebSocket connection to forward events to.
-        """
-
-        channel = f"events:room:{room_id}"
-        log = logger.bind(room_id=room_id, channel=channel)
-
-        pubsub = redis.pubsub()
-        await pubsub.subscribe(channel)
-
+    async def add_connection(self, room_id: str, websocket: WebSocket) -> None:
+        """Register a WebSocket and start the room's Redis listener if needed."""
         if room_id not in self.connections:
             self.connections[room_id] = set()
-
+            self.tasks[room_id] = asyncio.create_task(self._listen_to_room(room_id))
+            
         self.connections[room_id].add(websocket)
-        connection_count = len(self.connections[room_id])
+        logger.info("websocket_added_to_gateway", room_id=room_id, count=len(self.connections[room_id]))
 
-        log.info("pubsub_subscribed", active_connections=connection_count)
+    async def remove_connection(self, room_id: str, websocket: WebSocket) -> None:
+        """Unregister a WebSocket and cancel the Redis listener if room is empty."""
+        if room_id in self.connections:
+            self.connections[room_id].discard(websocket)
+            logger.info("websocket_removed_from_gateway", room_id=room_id, remaining=len(self.connections[room_id]))
+            
+            if not self.connections[room_id]:
+                del self.connections[room_id]
+                if room_id in self.tasks:
+                    self.tasks[room_id].cancel()
+                    del self.tasks[room_id]
+
+    async def _listen_to_room(self, room_id: str) -> None:
+        """Background task: listens to Redis and fans out to all connected WebSockets."""
+        channel = f"events:room:{room_id}"
+        log = logger.bind(room_id=room_id, channel=channel)
+        
+        pubsub = redis.pubsub()
+        await pubsub.subscribe(channel)
+        log.info("pubsub_subscribed_for_room")
 
         try:
             async for message in pubsub.listen():
@@ -63,59 +66,33 @@ class EventGateway:
                     continue
 
                 await self.broadcast(room_id, data)
-
+                
         except asyncio.CancelledError:
-            # Normal path when the WebSocket task is cancelled on disconnect.
-            log.info("pubsub_subscription_cancelled")
-            raise
-
+            log.info("pubsub_listener_cancelled_empty_room")
         except Exception:
             log.exception("pubsub_subscription_error")
-
         finally:
-            # Clean up the connection from the tracking set.
-            self.connections.get(room_id, set()).discard(websocket)
-            remaining = len(self.connections.get(room_id, set()))
-            log.info("pubsub_unsubscribed", remaining_connections=remaining)
-
             try:
                 await pubsub.unsubscribe(channel)
             except Exception:
                 log.warning("pubsub_unsubscribe_failed")
 
     async def broadcast(self, room_id: str, message: dict) -> None:
-        """Fan out a message to all WebSocket connections in a room.
-
-        Failed sends are logged and skipped so a single broken connection
-        does not prevent other clients from receiving the event.
-
-        Args:
-            room_id: The target quiz room.
-            message: JSON-serialisable dict to send.
-        """
-
+        """Fan out a message to all WebSocket connections in a room concurrently."""
         connections = self.connections.get(room_id, set())
-
         if not connections:
-            logger.debug("broadcast_no_connections", room_id=room_id)
             return
 
-        failed = 0
-        for ws in list(connections):
+        async def _safe_send(ws: WebSocket) -> bool:
             try:
                 await ws.send_json(message)
+                return True
             except Exception:
-                failed += 1
-                logger.warning(
-                    "broadcast_send_failed",
-                    room_id=room_id,
-                    event_type=message.get("type"),
-                )
+                return False
 
-        logger.debug(
-            "broadcast_sent",
-            room_id=room_id,
-            event_type=message.get("type"),
-            recipients=len(connections) - failed,
-            failed=failed,
-        )
+        # Fire all sends concurrently so one slow client doesn't block the rest
+        results = await asyncio.gather(*[_safe_send(ws) for ws in connections])
+        failed = results.count(False)
+
+        if failed > 0:
+            logger.warning("broadcast_send_failed", room_id=room_id, failed=failed)
