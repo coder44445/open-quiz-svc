@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -47,7 +48,6 @@ async def lifespan(app: FastAPI):
     async def cleanup_dead_rooms() -> None:
         """Background task to delete old abandoned LOBBY rooms from the database."""
         from datetime import datetime, timedelta
-        import asyncio
         from sqlalchemy import delete
         from app.infrastructure.database.models.match import Match
 
