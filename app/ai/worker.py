@@ -173,7 +173,11 @@ async def generate_questions(ctx, job_id: str) -> None:
                     q_models.append(QuestionModel(
                         match_id=match.id,
                         order=q_index,
-                        question_json=dataclasses.asdict(q),
+                        topic=q.topic,
+                        difficulty=q.difficulty,
+                        text=q.text,
+                        options=q.options,
+                        correct_index=q.correct_index,
                     ))
                 await uow.questions.save_all(q_models)
             
