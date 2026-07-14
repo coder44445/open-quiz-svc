@@ -23,6 +23,7 @@ class Settings(BaseSettings):
 
     host: str = "0.0.0.0"
     port: int = 8000
+    cors_origins: list[str] = Field(default=["http://localhost:3000"])
 
     database_url: str
     redis_url: str
