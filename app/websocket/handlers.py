@@ -207,9 +207,14 @@ class WebSocketEventHandlers:
             "current_question_index": session.current_question_index,
             "question": asdict(question) if question else None,
             "time_remaining": max(0, remaining),
+            "players": [
+                {"id": p.id, "name": p.name, "score": p.score}
+                for p in session.players.values()
+            ],
             "leaderboard": [
                 {
                     "player_id": p.id,
+                    "name": p.name,
                     "score": p.score,
                 }
                 for p in session.players.values()
