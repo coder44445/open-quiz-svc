@@ -44,10 +44,35 @@ async def lifespan(app: FastAPI):
 
     logger.info("application_started")
 
+    async def cleanup_dead_rooms() -> None:
+        """Background task to delete old abandoned LOBBY rooms from the database."""
+        from datetime import datetime, timedelta
+        import asyncio
+        from sqlalchemy import delete
+        from app.infrastructure.database.models.match import Match
+
+        while True:
+            await asyncio.sleep(3600)  # run once an hour
+            try:
+                async with session_factory() as session:
+                    cutoff = datetime.utcnow() - timedelta(hours=2)
+                    stmt = delete(Match).where(Match.state == "lobby", Match.created_at < cutoff)
+                    result = await session.execute(stmt)
+                    await session.commit()
+                    if result.rowcount > 0:
+                        logger.info("cleaned_dead_rooms", count=result.rowcount)
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.exception("cleanup_dead_rooms_error")
+
+    cleanup_task = asyncio.create_task(cleanup_dead_rooms())
+
     try:
         yield
     finally:
         logger.info("application_stopping")
+        cleanup_task.cancel()
 
         try:
             await redis.aclose()

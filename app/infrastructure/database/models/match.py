@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import String, Integer, JSON, DateTime
+from sqlalchemy import String, Integer, JSON, DateTime, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infrastructure.database.base import Base
@@ -21,6 +21,7 @@ class Match(Base):
 
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, server_default=func.now())
 
     total_players: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     total_questions: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
