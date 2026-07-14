@@ -201,9 +201,12 @@ async def generate_questions(ctx, job_id: str) -> None:
                 
             # Update the session with the questions generated so far so GameLoop can consume them
             session = await session_store.get(job.room_id)
-            if session:
-                session.questions = list(all_questions)  # copy current state
-                await session_store.save(session)
+            if not session:
+                log.warning("session_not_found_during_generation")
+                raise ValueError("Room is dead, stopping question generation early")
+                
+            session.questions = list(all_questions)  # copy current state
+            await session_store.save(session)
                 
             generated_count += current_batch_size
 
