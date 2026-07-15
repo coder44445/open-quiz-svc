@@ -4,7 +4,7 @@ set -e
 echo "Starting container, running migrations if DATABASE_URL is configured..."
 if [ -n "${DATABASE_URL}" ]; then
   echo "Running alembic upgrade head"
-  alembic -c alembic.ini upgrade head || true
+  alembic -c alembic.ini upgrade head
 fi
 
 echo "Launching Uvicorn"
