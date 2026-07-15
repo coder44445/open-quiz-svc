@@ -182,8 +182,25 @@ async def generate_questions(ctx, job_id: str) -> None:
                 await uow.questions.save_all(q_models)
             
             for j, q in enumerate(batch_questions):
-                q_index = generated_count + j
+                q.id = q_models[j].id
                 all_questions.append(q)
+
+            # Update the session with the questions generated so far so GameLoop can consume them
+            session = await session_store.get(job.room_id)
+            if not session:
+                log.warning("session_not_found_during_generation")
+                raise ValueError("Room is dead, stopping question generation early")
+                
+            connected_players = [p for p in session.players.values() if getattr(p, "is_connected", True)]
+            if not connected_players:
+                log.warning("abandoned_room_stopping_generation", room_id=job.room_id)
+                raise ValueError("All players disconnected, stopping question generation early")
+                
+            session.questions = list(all_questions)  # copy current state
+            await session_store.save(session)
+
+            for j, q in enumerate(batch_questions):
+                q_index = generated_count + j
                 log.info("question_persisted", question_index=q_index)
 
                 # Notify clients that one question is ready
@@ -202,15 +219,6 @@ async def generate_questions(ctx, job_id: str) -> None:
                         payload={"job_id": job.job_id, "progress": progress}
                     )
                 )
-                
-            # Update the session with the questions generated so far so GameLoop can consume them
-            session = await session_store.get(job.room_id)
-            if not session:
-                log.warning("session_not_found_during_generation")
-                raise ValueError("Room is dead, stopping question generation early")
-                
-            session.questions = list(all_questions)  # copy current state
-            await session_store.save(session)
                 
             generated_count += current_batch_size
 
@@ -289,6 +297,8 @@ class WorkerSettings:
 
     functions = [generate_questions]
     redis_settings = get_arq_settings(settings.redis_url)
+    max_tries = 1
+    job_timeout = 600
 
     @staticmethod
     async def on_startup(ctx: dict) -> None:
