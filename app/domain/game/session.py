@@ -109,7 +109,7 @@ class GameSession:
         return self.state.name == "FINISHED"
 
     def all_players_answered(self) -> bool:
-        """Return True if every connected player has submitted an answer for the current question."""
+        """Return True if every player in the session has submitted an answer."""
         if not self.players:
             return False
         key = str(self.current_question_index)
