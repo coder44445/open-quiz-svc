@@ -122,10 +122,12 @@ class GameLoop:
             )
 
             # ── Wait: time limit OR all players answered ───────────────────
-            elapsed = 0.0
-            while elapsed < session.time_limit:
+            import time as _time
+            effective_time_limit = session.time_limit
+
+            while (_time.time() - session.question_started_at) < effective_time_limit:
                 await asyncio.sleep(_POLL_INTERVAL)
-                elapsed += _POLL_INTERVAL
+                elapsed = _time.time() - session.question_started_at
 
                 # Re-read session to check latest answers
                 session = await self.store.get(room_id)
@@ -140,6 +142,14 @@ class GameLoop:
                         elapsed=round(elapsed, 1),
                     )
                     break
+
+                # Dynamically lower the wait time if someone disconnects
+                # This gives them 20 seconds to reconnect (e.g. page refresh) without freezing the game for 60s
+                if effective_time_limit > 20:
+                    has_disconnected = any(not getattr(p, "is_connected", True) for p in session.players.values())
+                    if has_disconnected:
+                        logger.info("dropping_time_limit_for_disconnect", room_id=room_id)
+                        effective_time_limit = 20
 
             # ── Broadcast result: reveal correct answer + leaderboard ──────
             await self.event_bus.publish(
