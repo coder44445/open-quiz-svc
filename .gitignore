@@ -23,3 +23,7 @@ postgres-data/
 
 # Python dependency lock files
 uv.lock
+
+# Docker overrides
+docker-compose.override.yml
+*.override.yml

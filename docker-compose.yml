@@ -52,8 +52,6 @@ services:
       OLLAMA_MODEL: qwen3.5:0.8b
     ports:
       - "8000:8000"
-    volumes:
-      - .:/app:rw
     healthcheck:
       # /healthz checks DB and Redis connectivity.
       test: ["CMD-SHELL", "curl -f http://localhost:8000/healthz || exit 1"]
@@ -80,8 +78,6 @@ services:
       REDIS_URL: redis://redis:6379/0
       OLLAMA_HOST: http://ollama:11434
       OLLAMA_MODEL: qwen3.5:0.8b
-    volumes:
-      - .:/app:rw
 
 volumes:
   db_data:
