@@ -81,6 +81,7 @@ def validate_questions(raw_questions: list[dict], expected_count: int) -> list[Q
             Question(
                 id=index,
                 topic=validated.topic,
+                difficulty=validated.difficulty,
                 text=validated.question,
                 options=validated.options,
                 correct_index=validated.correct_index,

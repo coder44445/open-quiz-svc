@@ -11,6 +11,7 @@ class Question:
 
     id: int
     topic: str
+    difficulty: str
     text: str
     options: list[str]
     correct_index: int
