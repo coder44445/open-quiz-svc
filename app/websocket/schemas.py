@@ -27,6 +27,7 @@ class AnswerEvent(BaseClientEvent):
 class RejoinEvent(BaseClientEvent):
     type: Literal["rejoin"] = "rejoin"
     player_id: str
+    user: str | None = None
 
 class ForceStartEvent(BaseClientEvent):
     """Host forces game to start with whatever topics have been collected so far."""

@@ -149,6 +149,10 @@ class SessionRepository:
 
         return session
 
+    def get_lock(self, room_id: str, timeout: int = 5):
+        """Get an advisory lock for atomic session updates."""
+        return self.redis.lock(f"lock:session:{room_id}", timeout=timeout)
+
     def _serialize(self, session: GameSession) -> dict:
         """Convert a GameSession to a plain dict suitable for JSON serialisation."""
 
@@ -160,6 +164,7 @@ class SessionRepository:
                     "id": player.id,
                     "name": player.name,
                     "score": player.score,
+                    "is_connected": getattr(player, "is_connected", True),
                 }
                 for player_id, player in session.players.items()
             },
