@@ -154,9 +154,14 @@ class WebSocketEventHandlers:
             ctx.log.warning("answer_ignored_no_session")
             return
 
+        current_q = session.get_current_question()
+        if not current_q:
+            ctx.log.warning("answer_ignored_no_current_question")
+            return
+
         answer = Answer(
             player_id=payload.player_id,
-            question_id=session.current_question_index,
+            question_id=current_q.id,
             selected_index=payload.selected,
             time_taken=payload.time_taken,
         )
@@ -176,19 +181,23 @@ class WebSocketEventHandlers:
 
     @staticmethod
     async def handle_rejoin(ctx: ConnectionContext, payload: RejoinEvent) -> None:
-        session = await game_service.get_session(ctx.room_id)
-        if not session:
-            ctx.log.warning("rejoin_ignored_no_session", player_id=payload.player_id)
-            return
+        async with game_service.store.get_lock(ctx.room_id):
+            session = await game_service.get_session(ctx.room_id)
+            if not session:
+                ctx.log.warning("rejoin_ignored_no_session", player_id=payload.player_id)
+                return
 
-        if payload.player_id not in session.players:
-            ctx.log.warning("rejoin_ignored_player_not_found", player_id=payload.player_id)
-            await ctx.websocket.send_json({"type": "error", "message": "Session expired or player removed."})
-            return
+            if payload.player_id not in session.players:
+                ctx.log.warning("rejoin_ignored_player_not_found", player_id=payload.player_id)
+                await ctx.websocket.send_json({"type": "error", "message": "Session expired or player removed."})
+                return
 
-        # Restore context identity
-        ctx.player_id = payload.player_id
-        ctx.log = ctx.log.bind(player_id=ctx.player_id)
+            # Restore context identity
+            ctx.player_id = payload.player_id
+            ctx.log = ctx.log.bind(player_id=ctx.player_id)
+
+            session.players[ctx.player_id].is_connected = True
+            await game_service.store.save(session)
 
         question = session.get_current_question()
         remaining = session.time_limit - (
@@ -208,6 +217,8 @@ class WebSocketEventHandlers:
             "current_question_index": session.current_question_index,
             "question": asdict(question) if question else None,
             "time_remaining": max(0, remaining),
+            "is_topic_collection_active": bool(session.chosen_topic_submitters and session.state.value == "lobby"),
+            "pending_topic_count": len(session.pending_topic_submitters),
             "host_id": session.host_id,
             "players": [
                 {"id": p.id, "name": p.name, "score": p.score}
