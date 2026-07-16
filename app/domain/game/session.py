@@ -41,6 +41,8 @@ class GameSession:
     questions: list[Question] = field(default_factory=list)
     answers: dict[str, list[Answer]] = field(default_factory=dict)
     time_limit: int = 60
+    difficulty: str = "medium"
+    question_count: int = 15
 
     state: GameState = GameState.LOBBY
     state_controller: GameStateController = field(default_factory=GameStateController)

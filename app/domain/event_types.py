@@ -27,3 +27,4 @@ class EventType:
     CHAT_MESSAGE = "chat_message"
     TIMER_ADJUSTED = "timer_adjusted"
     PLAYER_KICKED = "player_kicked"
+    GAME_CONFIGURED = "game_configured"

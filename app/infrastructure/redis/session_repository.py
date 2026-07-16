@@ -76,6 +76,8 @@ class SessionRepository:
             for question_id, answers in raw.get("answers", {}).items()
         }
         session.time_limit = raw.get("time_limit", 60)
+        session.difficulty = raw.get("difficulty", "medium")
+        session.question_count = raw.get("question_count", 15)
         session.state = GameState(raw.get("state", GameState.LOBBY.value))
         session.question_started_at = raw.get("question_started_at", 0)
         session.current_question_index = raw.get("current_question_index", 0)
@@ -175,6 +177,8 @@ class SessionRepository:
                 for question_id, answers in session.answers.items()
             },
             "time_limit": session.time_limit,
+            "difficulty": session.difficulty,
+            "question_count": session.question_count,
             "state": session.state.value,
             "question_started_at": session.question_started_at,
             "current_question_index": session.current_question_index,

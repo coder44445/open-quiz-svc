@@ -334,15 +334,14 @@ class GameService:
             ValueError: If the session does not exist, is not in LOBBY state,
                         or has no topics.
         """
-        if count is None:
-            from app.core.config import settings
-            count = settings.total_questions
-
         session = await self.store.get(room_id)
 
         if not session:
             logger.warning("game_start_failed", room_id=room_id, reason="session_not_found")
             raise ValueError("Session not found")
+
+        if count is None:
+            count = session.question_count
 
         if session.state != GameState.LOBBY:
             logger.warning(
@@ -383,7 +382,7 @@ class GameService:
         await create_generation_job(
             room_id=room_id,
             topics=session.topics,
-            difficulty=Difficulty.MEDIUM,
+            difficulty=Difficulty(session.difficulty),
             count=count,
         )
 

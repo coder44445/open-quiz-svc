@@ -37,6 +37,17 @@ class ChatEvent(BaseClientEvent):
     type: Literal["chat"] = "chat"
     message: str
 
+class KickEvent(BaseClientEvent):
+    """Host removes a player from the lobby."""
+    type: Literal["kick"] = "kick"
+    player_id: str
+
+class ConfigureEvent(BaseClientEvent):
+    """Host sets game difficulty and question count before starting."""
+    type: Literal["configure"] = "configure"
+    difficulty: Literal["easy", "medium", "hard"] = "medium"
+    question_count: int = 15
+
 # A discriminated union based on the "type" field
 ClientEventPayload = Annotated[
     Union[
@@ -48,6 +59,8 @@ ClientEventPayload = Annotated[
         RejoinEvent,
         ForceStartEvent,
         ChatEvent,
+        KickEvent,
+        ConfigureEvent,
     ],
     Field(discriminator="type")
 ]

@@ -15,7 +15,8 @@ from app.infrastructure.events.event_bus import GameEventBus
 from app.domain.events import GameEvent
 from app.domain.event_types import EventType
 from app.websocket.schemas import (
-    JoinEvent, TopicEvent, StartEvent, BeginEvent, AnswerEvent, RejoinEvent, ForceStartEvent, ChatEvent
+    JoinEvent, TopicEvent, StartEvent, BeginEvent, AnswerEvent, RejoinEvent,
+    ForceStartEvent, ChatEvent, KickEvent, ConfigureEvent,
 )
 
 logger = structlog.get_logger(__name__)
@@ -253,3 +254,66 @@ class WebSocketEventHandlers:
                 },
             )
         )
+
+    @staticmethod
+    async def handle_kick(ctx: ConnectionContext, payload: KickEvent) -> None:
+        from app.domain.game.state import GameState
+        session = await game_service.get_session(ctx.room_id)
+        if not session:
+            return
+
+        if session.host_id != ctx.player_id:
+            ctx.log.warning("kick_rejected_not_host", requester=ctx.player_id)
+            await ctx.websocket.send_json({"type": "error", "message": "Only the host can kick players."})
+            return
+
+        if session.state != GameState.LOBBY:
+            ctx.log.warning("kick_rejected_game_in_progress")
+            await ctx.websocket.send_json({"type": "error", "message": "Cannot kick players once the game has started."})
+            return
+
+        if payload.player_id not in session.players:
+            return
+
+        kicked_name = session.players[payload.player_id].name
+        await game_service.remove_player(ctx.room_id, payload.player_id)
+
+        await event_bus.publish(
+            GameEvent(
+                type=EventType.PLAYER_KICKED,
+                room_id=ctx.room_id,
+                payload={"kicked_player_id": payload.player_id, "kicked_player_name": kicked_name},
+            )
+        )
+        ctx.log.info("player_kicked", kicked_id=payload.player_id, kicked_name=kicked_name)
+
+    @staticmethod
+    async def handle_configure(ctx: ConnectionContext, payload: ConfigureEvent) -> None:
+        from app.domain.game.state import GameState
+        from app.core.config import settings
+        session = await game_service.get_session(ctx.room_id)
+        if not session:
+            return
+
+        if session.host_id != ctx.player_id:
+            ctx.log.warning("configure_rejected_not_host", requester=ctx.player_id)
+            return
+
+        if session.state != GameState.LOBBY:
+            ctx.log.warning("configure_rejected_wrong_state", state=session.state.value)
+            return
+
+        max_q = 20
+        question_count = max(5, min(max_q, payload.question_count))
+        session.difficulty = payload.difficulty
+        session.question_count = question_count
+        await game_service.store.save(session)
+
+        await event_bus.publish(
+            GameEvent(
+                type=EventType.GAME_CONFIGURED,
+                room_id=ctx.room_id,
+                payload={"difficulty": session.difficulty, "question_count": session.question_count},
+            )
+        )
+        ctx.log.info("game_configured", difficulty=session.difficulty, question_count=session.question_count)

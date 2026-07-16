@@ -12,8 +12,9 @@ from pydantic import ValidationError
 from app.core.logging import logger
 from app.websocket.event_gateway import EventGateway
 from app.websocket.schemas import (
-    ClientEventAdapter, JoinEvent, TopicEvent, StartEvent, 
-    BeginEvent, AnswerEvent, RejoinEvent, ForceStartEvent, ChatEvent
+    ClientEventAdapter, JoinEvent, TopicEvent, StartEvent,
+    BeginEvent, AnswerEvent, RejoinEvent, ForceStartEvent, ChatEvent,
+    KickEvent, ConfigureEvent,
 )
 from app.websocket.handlers import ConnectionContext, WebSocketEventHandlers, game_service
 
@@ -31,6 +32,8 @@ EVENT_HANDLERS = {
     AnswerEvent: WebSocketEventHandlers.handle_answer,
     RejoinEvent: WebSocketEventHandlers.handle_rejoin,
     ChatEvent: WebSocketEventHandlers.handle_chat,
+    KickEvent: WebSocketEventHandlers.handle_kick,
+    ConfigureEvent: WebSocketEventHandlers.handle_configure,
 }
 
 
