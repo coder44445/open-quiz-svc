@@ -143,13 +143,21 @@ class GameLoop:
                     )
                     break
 
-                # Dynamically lower the wait time if someone disconnects
-                # This gives them 20 seconds to reconnect (e.g. page refresh) without freezing the game for 60s
+                # Drop the wait window when someone disconnects so the remaining
+                # players don't have to stare at a frozen timer for the full duration.
                 if effective_time_limit > 20:
                     has_disconnected = any(not getattr(p, "is_connected", True) for p in session.players.values())
                     if has_disconnected:
-                        logger.info("dropping_time_limit_for_disconnect", room_id=room_id)
-                        effective_time_limit = 20
+                        elapsed_so_far = _time.time() - session.question_started_at
+                        effective_time_limit = max(20, int(elapsed_so_far) + 5)
+                        logger.info("timer_adjusted_for_disconnect", room_id=room_id, new_limit=effective_time_limit)
+                        await self.event_bus.publish(
+                            GameEvent(
+                                type=EventType.TIMER_ADJUSTED,
+                                room_id=room_id,
+                                payload={"new_limit": effective_time_limit},
+                            )
+                        )
 
             # ── Broadcast result: reveal correct answer + leaderboard ──────
             await self.event_bus.publish(

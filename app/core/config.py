@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -47,6 +47,15 @@ class Settings(BaseSettings):
     llm_temperature: float = 0.7
     
     llm_timeout: int = 120
+
+    @model_validator(mode="after")
+    def _validate_cors_in_production(self) -> "Settings":
+        if self.environment == "production" and "*" in self.cors_origins:
+            raise ValueError(
+                "CORS_ORIGINS cannot be '*' in production. "
+                "Set it to your actual frontend domain, e.g. https://yourapp.com"
+            )
+        return self
 
 
 @lru_cache(maxsize=1)

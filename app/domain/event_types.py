@@ -25,3 +25,5 @@ class EventType:
     ANSWER_RECEIVED = "answer_received"
     GAME_FINISHED = "game_finished"
     CHAT_MESSAGE = "chat_message"
+    TIMER_ADJUSTED = "timer_adjusted"
+    PLAYER_KICKED = "player_kicked"

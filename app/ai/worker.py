@@ -82,12 +82,11 @@ async def generate_questions(ctx, job_id: str) -> None:
         provider = OllamaProvider(model=settings.ollama_model)
         engine = AIEngine(provider)
 
-        # Notify clients that the AI pipeline is active.
         await event_bus.publish(
             GameEvent(
                 type=EventType.JOB_PROGRESS,
                 room_id=job.room_id,
-                payload={"job_id": job.job_id, "progress": 10},
+                payload={"job_id": job.job_id, "progress": 5},
             )
         )
 
