@@ -7,6 +7,7 @@ from fastapi import FastAPI, Request, Response
 
 from app.api.health import router as health_router
 from app.api.game import router as game_router
+from app.api.matches import router as matches_router
 from app.core.config import settings
 from app.core.lifespan import lifespan
 from app.core.logging import logger
@@ -32,6 +33,7 @@ app.add_middleware(
 
 app.include_router(health_router)
 app.include_router(game_router)
+app.include_router(matches_router)
 app.include_router(websocket_router)
 
 

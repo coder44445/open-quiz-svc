@@ -205,7 +205,6 @@ class GameLoop:
             total_questions=len(session.questions),
         )
 
-        # Broadcast final leaderboard to all clients
         await self.event_bus.publish(
             GameEvent(
                 type=EventType.GAME_FINISHED,
@@ -223,21 +222,99 @@ class GameLoop:
             )
         )
 
-        # Persist result to database
-        async with self.uow_factory() as uow:
-            match = None
-            if session.match_id is not None:
-                match = await uow.matches.get_by_room(room_id)
-
-            if not match:
-                from app.infrastructure.database.models.match import Match
-                match = Match(room_id=room_id)
-                await uow.matches.add(match)
-
-            match.state = "finished"
-            match.finished_at = datetime.now(timezone.utc)
-            match.total_players = len(session.players)
-            match.total_questions = len(session.questions)
+        await self._persist_match(room_id, session)
 
         logger.info("game_finished", room_id=room_id, player_count=len(session.players))
         return result
+
+    async def _persist_match(self, room_id: str, session) -> None:
+        """Write the completed match record — questions, player scores, and answers — to the DB.
+
+        Idempotent: if a Match row already exists for this room it is reused so
+        partial writes (e.g. from a previous crash) don't create duplicate rows.
+        """
+        from app.infrastructure.database.models.match import Match as MatchModel
+        from app.infrastructure.database.models.question import Question as QuestionModel
+        from app.infrastructure.database.models.match_player import MatchPlayer
+        from app.infrastructure.database.models.answer import Answer as AnswerModel
+        from app.infrastructure.database.models.player import Player
+
+        try:
+            async with self.uow_factory() as uow:
+                match = await uow.matches.get_by_room(room_id)
+                if not match:
+                    match = MatchModel(room_id=room_id)
+                    await uow.matches.add(match)
+
+                match.state = "finished"
+                match.finished_at = datetime.now(timezone.utc)
+                match.total_players = len(session.players)
+                match.total_questions = len(session.questions)
+
+                # Upsert player rows so history can display player names
+                for player in session.players.values():
+                    existing = await uow.players.get_by_id(player.id)
+                    if not existing:
+                        uow.session.add(Player(id=player.id, name=player.name))
+                    else:
+                        existing.name = player.name
+
+                await uow.session.flush()
+
+                # Write question rows (skip if already persisted from a previous attempt)
+                question_id_map: dict[int, int] = {}
+                for domain_q in session.questions:
+                    q_row = QuestionModel(
+                        match_id=match.id,
+                        order=domain_q.id,
+                        topic=domain_q.topic,
+                        difficulty=domain_q.difficulty,
+                        text=domain_q.text,
+                        options=domain_q.options,
+                        correct_index=domain_q.correct_index,
+                    )
+                    uow.session.add(q_row)
+                    await uow.session.flush()
+                    question_id_map[domain_q.id] = q_row.id
+
+                # Write per-player scores and answers
+                for player in session.players.values():
+                    correct_count = sum(
+                        1
+                        for q in session.questions
+                        if any(
+                            a.selected == q.correct_index
+                            for a in session.answers.get(q.id, [])
+                            if a.player_id == player.id
+                        )
+                    )
+                    mp = MatchPlayer(
+                        match_id=match.id,
+                        player_id=player.id,
+                        score=player.score,
+                        correct_answers=correct_count,
+                    )
+                    uow.session.add(mp)
+
+                    for domain_q in session.questions:
+                        player_answers = [
+                            a for a in session.answers.get(domain_q.id, [])
+                            if a.player_id == player.id
+                        ]
+                        if not player_answers:
+                            continue
+                        ans = player_answers[0]
+                        db_q_id = question_id_map.get(domain_q.id)
+                        if db_q_id is None:
+                            continue
+                        uow.session.add(AnswerModel(
+                            match_id=match.id,
+                            question_id=db_q_id,
+                            player_id=player.id,
+                            selected_option=ans.selected,
+                            score=ans.score,
+                            time_taken=ans.time_taken,
+                        ))
+
+        except Exception:
+            logger.exception("persist_match_failed", room_id=room_id)
