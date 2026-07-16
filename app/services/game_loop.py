@@ -253,7 +253,7 @@ class GameLoop:
 
                 # Upsert player rows so history can display player names
                 for player in session.players.values():
-                    existing = await uow.players.get_by_id(player.id)
+                    existing = await uow.players.get(player.id)
                     if not existing:
                         uow.session.add(Player(id=player.id, name=player.name))
                     else:

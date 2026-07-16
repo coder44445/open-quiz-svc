@@ -15,6 +15,3 @@ class PlayerRepository:
 
     async def get(self, player_id: str) -> Player | None:
         return await self.session.get(Player, player_id)
-
-    async def get_by_id(self, player_id: str) -> Player | None:
-        return await self.session.get(Player, player_id)
