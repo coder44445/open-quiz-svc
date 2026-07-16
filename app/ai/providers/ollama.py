@@ -109,3 +109,43 @@ class OllamaProvider:
 
         log.info("ollama_parsed_questions", raw_count=len(data))
         return data
+
+    async def verify_question(self, question_text: str, options: list[str]) -> int | None:
+        """Ask the model to answer a question from the generated set as a verifier.
+
+        Generating a question and answering it are different cognitive tasks —
+        even small models answer multiple-choice more reliably than they generate
+        correct answers from scratch. Using the model as its own verifier catches
+        the most common failure: a wrong correct_index.
+
+        Returns the 0-based index the model chose, or None if the response
+        cannot be parsed (treated as a non-fatal inconclusive result).
+        """
+        options_text = "\n".join(f"{i}. {opt}" for i, opt in enumerate(options))
+        prompt = (
+            f"Question: {question_text}\n\n"
+            f"Options:\n{options_text}\n\n"
+            "Which option index (0, 1, 2, or 3) is correct? "
+            "Reply with ONLY the digit — no explanation."
+        )
+
+        log = logger.bind(model=self.model)
+        try:
+            response = await self.client.chat(
+                model=self.model,
+                think=False,
+                messages=[{"role": "user", "content": prompt}],
+                options={"temperature": 0.0},
+            )
+            content = (response.message.content or "").strip()
+            # Accept first digit found in response — model sometimes adds punctuation
+            for ch in content:
+                if ch.isdigit():
+                    idx = int(ch)
+                    if 0 <= idx < len(options):
+                        return idx
+            log.warning("verify_question_unparseable", content_preview=content[:50])
+            return None
+        except Exception:
+            log.warning("verify_question_failed")
+            return None

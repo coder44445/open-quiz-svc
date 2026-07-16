@@ -5,7 +5,7 @@ import time
 import structlog
 
 from app.ai.providers.base import AIProvider
-from app.ai.validator import validate_questions
+from app.ai.validator import validate_questions, verify_questions
 from app.domain.question.difficutly import Difficulty
 from app.domain.question.model import Question
 
@@ -28,7 +28,7 @@ class AIEngine:
         difficulty: Difficulty,
         count: int,
     ) -> list[Question]:
-        """Generate and validate quiz questions.
+        """Generate, validate, and verify quiz questions.
 
         Args:
             topics:     List of topic strings to generate questions for.
@@ -36,7 +36,7 @@ class AIEngine:
             count:      Exact number of questions expected.
 
         Returns:
-            Validated list of Question domain objects.
+            Validated and correctness-verified list of Question domain objects.
 
         Raises:
             ValueError: If the provider returns unexpected output or validation fails.
@@ -61,8 +61,15 @@ class AIEngine:
         elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
         log.info("ai_generation_raw_received", raw_count=len(raw_questions), elapsed_ms=elapsed_ms)
 
-        # Validate the raw provider output against the domain Question schema.
         questions = validate_questions(raw_questions, count)
 
-        log.info("ai_generation_validated", question_count=len(questions))
+        # Only providers that implement verify_question participate in the
+        # second-pass check. This keeps the base AIProvider contract minimal.
+        if hasattr(self.provider, "verify_question"):
+            verify_start = time.perf_counter()
+            questions = await verify_questions(questions, self.provider)  # type: ignore[arg-type]
+            verify_ms = round((time.perf_counter() - verify_start) * 1000, 2)
+            log.info("ai_generation_verified", question_count=len(questions), verify_ms=verify_ms)
+
+        log.info("ai_generation_complete", question_count=len(questions))
         return questions
