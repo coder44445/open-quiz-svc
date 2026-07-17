@@ -20,6 +20,7 @@ from app.domain.game.state import GameState
 from app.infrastructure.redis.session_repository import SessionRepository
 from app.core.config import settings
 from app.core.redis import get_arq_settings
+from arq import cron
 from app import metrics
 
 
@@ -295,6 +296,10 @@ class WorkerSettings:
     """
 
     functions = [generate_questions]
+    cron_jobs = [
+        # Run daily at midnight UTC to clean up abandoned match records in the DB.
+        cron(cleanup_abandoned_matches, hour=0, minute=0),
+    ]
     redis_settings = get_arq_settings(settings.redis_url)
     max_tries = 1
     job_timeout = 600
@@ -318,3 +323,31 @@ class WorkerSettings:
             logger.info("arq_worker_redis_closed")
         except Exception:
             logger.warning("arq_worker_redis_close_failed")
+
+
+async def cleanup_abandoned_matches(ctx) -> None:
+    """Periodic task: mark Match rows stuck in non-terminal states as 'abandoned'.
+
+    Runs every 24 hours. Targets rooms that were created more than 3 hours ago
+    but never reached 'finished' — i.e. the host abandoned the game before it
+    started, or the game crashed mid-generation.
+
+    The 3-hour window is generous enough to exclude any game still legitimately
+    in progress (longest possible game: 20 questions × ~2 min each = 40 min).
+    """
+    from datetime import datetime, timezone, timedelta
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=3)
+
+    async with UnitOfWork() as uow:
+        stale = await uow.matches.find_stale(
+            states=["lobby", "generating"],
+            before=cutoff,
+        )
+        if not stale:
+            logger.info("cleanup_no_stale_matches")
+            return
+
+        for match in stale:
+            match.state = "abandoned"
+
+    logger.info("cleanup_abandoned_matches_done", count=len(stale))

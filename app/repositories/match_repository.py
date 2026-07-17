@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -78,5 +80,25 @@ class MatchRepository:
             .order_by(desc(Match.finished_at))
             .limit(limit)
             .offset(offset)
+        )
+        return list(result.scalars().all())
+
+    async def find_stale(
+        self,
+        states: list[str],
+        before: datetime,
+    ) -> list[Match]:
+        """Return Match rows stuck in non-terminal states older than `before`.
+
+        Used by the cleanup job to identify rooms that were abandoned mid-game
+        (e.g. host closed the browser before clicking Begin) without ever reaching
+        the 'finished' state.
+        """
+        result = await self.session.execute(
+            select(Match)
+            .where(
+                Match.state.in_(states),
+                Match.created_at < before,
+            )
         )
         return list(result.scalars().all())

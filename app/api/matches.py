@@ -19,6 +19,8 @@ class MatchSummary(BaseModel):
     finished_at: datetime | None
     total_players: int
     total_questions: int
+    difficulty: str
+    question_count: int
 
 
 class PlayerResult(BaseModel):
@@ -52,6 +54,8 @@ class MatchDetail(BaseModel):
     finished_at: datetime | None
     total_players: int
     total_questions: int
+    difficulty: str
+    question_count: int
     leaderboard: list[PlayerResult]
     questions: list[QuestionResult]
     answers: list[AnswerDetail]
@@ -74,6 +78,8 @@ async def list_matches(
                 finished_at=m.finished_at,
                 total_players=m.total_players,
                 total_questions=m.total_questions,
+                difficulty=m.difficulty,
+                question_count=m.question_count,
             )
             for m in matches
         ]
@@ -101,6 +107,8 @@ async def get_match(room_id: str) -> MatchDetail:
         finished_at=match.finished_at,
         total_players=match.total_players,
         total_questions=match.total_questions,
+        difficulty=match.difficulty,
+        question_count=match.question_count,
         leaderboard=sorted(
             [
                 PlayerResult(

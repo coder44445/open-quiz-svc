@@ -250,6 +250,8 @@ class GameLoop:
                 match.finished_at = datetime.now(timezone.utc)
                 match.total_players = len(session.players)
                 match.total_questions = len(session.questions)
+                match.difficulty = session.difficulty
+                match.question_count = session.question_count
 
                 # Upsert player rows so history can display player names
                 for player in session.players.values():
