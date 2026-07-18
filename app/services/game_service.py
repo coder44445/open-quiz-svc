@@ -74,7 +74,7 @@ class GameService:
         for _ in range(10):
             adj = secrets.choice(adjectives)
             noun = secrets.choice(nouns)
-            num = secrets.choice(range(1000, 9999))
+            num = secrets.choice(range(100))
             room_id = f"{adj}-{noun}-{num}"
             
             # Check the DB to guarantee global uniqueness. Even though room_id isn't 
