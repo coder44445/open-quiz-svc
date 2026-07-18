@@ -136,22 +136,28 @@ class GameService:
         ))
 
         if session.match_id is not None:
-            async with self.uow_factory() as uow:
-                existing = await uow.players.get(player.id)
-                if not existing:
-                    await uow.players.save(PlayerModel(id=player.id, name=player.name))
+            import asyncio
+            async def _persist_player_to_db():
+                try:
+                    async with self.uow_factory() as uow:
+                        existing = await uow.players.get(player.id)
+                        if not existing:
+                            await uow.players.save(PlayerModel(id=player.id, name=player.name))
 
-                match_player = await uow.match_players.get_by_match_and_player(
-                    session.match_id,
-                    player.id,
-                )
-                if not match_player:
-                    await uow.matches.add(
-                        MatchPlayer(
-                            match_id=session.match_id,
-                            player_id=player.id,
+                        match_player = await uow.match_players.get_by_match_and_player(
+                            session.match_id,
+                            player.id,
                         )
-                    )
+                        if not match_player:
+                            await uow.matches.add(
+                                MatchPlayer(
+                                    match_id=session.match_id,
+                                    player_id=player.id,
+                                )
+                            )
+                except Exception:
+                    logger.exception("player_persistence_failed", room_id=room_id, player_id=player.id)
+            asyncio.create_task(_persist_player_to_db())
 
     async def remove_player(self, room_id: str, player_id: str) -> None:
         """Remove a player from the session on disconnect and broadcast the updated list."""

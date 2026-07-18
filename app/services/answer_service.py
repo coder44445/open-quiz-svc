@@ -49,21 +49,28 @@ class AnswerService:
 
         await self.session_store.save(session)
 
-        async with UnitOfWork() as uow:
-            player = await uow.players.get(answer.player_id)
-            if not player:
-                player = PlayerModel(id=answer.player_id, name=session.players[answer.player_id].name)
-                await uow.players.save(player)
+        import asyncio
+        async def _persist_answer_to_db():
+            try:
+                async with UnitOfWork() as uow:
+                    player = await uow.players.get(answer.player_id)
+                    if not player:
+                        player = PlayerModel(id=answer.player_id, name=session.players[answer.player_id].name)
+                        await uow.players.save(player)
 
-            answer_record = AnswerModel(
-                match_id=session.match_id,
-                question_id=answer.question_id,
-                player_id=answer.player_id,
-                selected_option=answer.selected_index,
-                score=score,
-                time_taken=answer.time_taken,
-            )
-            await uow.answers.save(answer_record)
+                    answer_record = AnswerModel(
+                        match_id=session.match_id,
+                        question_id=answer.question_id,
+                        player_id=answer.player_id,
+                        selected_option=answer.selected_index,
+                        score=score,
+                        time_taken=answer.time_taken,
+                    )
+                    await uow.answers.save(answer_record)
+            except Exception:
+                logger.exception("answer_persistence_failed", room_id=room_id, player_id=answer.player_id)
+
+        asyncio.create_task(_persist_answer_to_db())
 
 
         await self.event_bus.publish(
