@@ -28,7 +28,10 @@ class MatchPlayerRepository:
         return result.scalar_one_or_none()
 
     async def get_by_match(self, match_id: int) -> list[MatchPlayer]:
+        from sqlalchemy.orm import selectinload
         result = await self.session.execute(
-            select(MatchPlayer).where(MatchPlayer.match_id == match_id)
+            select(MatchPlayer)
+            .where(MatchPlayer.match_id == match_id)
+            .options(selectinload(MatchPlayer.player))
         )
-        return result.scalars().all()
+        return list(result.scalars().all())
