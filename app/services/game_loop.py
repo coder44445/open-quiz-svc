@@ -22,8 +22,13 @@ class GameLoop:
     """
     Executes real-time game progression.
 
-    Completely decoupled from any WebSocket connection — it runs as an
-    application-level background task so it survives host disconnects.
+    [ARCHITECTURE INTENT: Decoupled Background Task]
+    The loop is completely decoupled from any WebSocket connection. It runs as an
+    infinite `asyncio` task. 
+    Why? If the 'Host' player loses their cell connection, we DO NOT want the game 
+    to crash or pause for everyone else. By running this loop independently on the 
+    server, the game progresses flawlessly, and if the host reconnects, they just 
+    catch up to the current state.
 
     For each question:
     1. Broadcasts the full question payload over the event bus so every

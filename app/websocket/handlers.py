@@ -152,6 +152,13 @@ class WebSocketEventHandlers:
 
     @staticmethod
     async def handle_answer(ctx: ConnectionContext, payload: AnswerEvent) -> None:
+        # [ARCHITECTURE INTENT: Concurrency & Redis Locks]
+        # In a 20-player room, it is highly likely that 2+ players will submit an 
+        # answer at the exact same millisecond. If we do not lock the room here, 
+        # both requests will read the same Session state from Redis, locally modify 
+        # their own copy, and write it back, overwriting (and deleting) the other 
+        # player's score. 
+        # `get_lock()` ensures these highly concurrent mutations happen serially.
         async with game_service.store.get_lock(ctx.room_id):
             session = await game_service.get_session(ctx.room_id)
             if not session:

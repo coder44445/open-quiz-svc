@@ -15,9 +15,13 @@ logger = structlog.get_logger(__name__)
 class EventGateway:
     """Listens to Redis Pub/Sub and forwards events to WebSocket clients.
 
-    Maintains exactly ONE Redis Pub/Sub subscription per room, regardless of
-    how many WebSocket clients are connected to that room. When a message is
-    received from Redis, it fans out (broadcasts) to all active WebSockets.
+    [ARCHITECTURE INTENT: Multiplexed Fan-Out Gateway]
+    Instead of spawning a dedicated Redis Pub/Sub listener for EVERY connected 
+    WebSocket (which forces Redis to manage thousands of subscriptions and causes 
+    connection limits to crash under load), we use this singleton.
+
+    It creates exactly ONE Redis subscription per room. When a message hits that 
+    subscription, it fans out (broadcasts) the payload to all WebSockets in memory.
     """
 
     def __init__(self) -> None:
@@ -90,7 +94,11 @@ class EventGateway:
             except Exception:
                 return False
 
-        # Fire all sends concurrently so one slow client doesn't block the rest
+        # [ARCHITECTURE INTENT: Concurrent Delivery]
+        # We MUST use asyncio.gather here instead of a simple `for ws in connections:` loop.
+        # If we loop synchronously, a client with a terrible mobile connection 
+        # (e.g., buffering TCP packets) will freeze the loop and delay the message 
+        # for every other player in the room. gather() fires them all in parallel.
         results = await asyncio.gather(*[_safe_send(ws) for ws in connections])
         failed = results.count(False)
 
