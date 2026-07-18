@@ -20,9 +20,9 @@ Recent upgrades have stabilized the architecture for production, focusing on rac
 1. Create and activate a virtualenv:
 
 ```bash
-python3 -m venv .venv
+uv venv
 source .venv/bin/activate
-pip install -r requirements.txt
+uv sync
 ```
 
 2. Configure your environment variables:
