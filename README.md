@@ -1,139 +1,94 @@
-# AI-Powered Real-Time Multiplayer Quiz Platform
+# Open Quiz Backend (FastAPI + AI Engine)
 
-## Overview
+This is the highly concurrent, event-driven backend for the Open Quiz real-time multiplayer platform. It uses FastAPI for REST/WebSocket traffic, Redis for sub-millisecond state management and Pub/Sub, PostgreSQL for permanent records, and ARQ for asynchronous AI question generation via Ollama.
 
-Production-ready backend for real-time multiplayer quiz games. Built with FastAPI (HTTP + WebSocket), Redis for runtime session state, PostgreSQL for durable persistence, and an isolated ARQ AI worker for generating quiz questions via Ollama.
+## 🏗️ Architecture & "Why" Decisions
 
-Recent upgrades have stabilized the architecture for production, focusing on race-condition mitigation, performance profiling, and resilient state recovery.
+* **Multiplexed WebSocket Gateway:** Instead of spawning a dedicated Redis Pub/Sub listener for *every single* connected WebSocket (which crashes Redis under high load), we use a singleton `EventGateway`. It creates exactly *one* Redis listener per active room, and multiplexes incoming messages to all connected clients in memory using `asyncio.gather`. 
+* **State Recovery & Reconnects:** Mobile browsers constantly drop WebSockets when the screen turns off. To prevent players from being kicked out, the WebSocket connection lifecycle is entirely decoupled from the actual `Player` state. A player can drop and reconnect, passing a `rejoin` event, and immediately receive the current game state without losing their score.
+* **Passive Memory Management:** Rooms are stored entirely in Redis for speed. To prevent memory leaks when users simply close their browser without clicking "Leave", all rooms have a 2-hour sliding TTL (Time to Live). Redis passively deletes abandoned rooms.
+* **Asynchronous AI Worker (ARQ):** Generating 15 questions via an LLM takes time (30+ seconds). Doing this inside a web request blocks the server. Instead, we push a job to Redis. A background ARQ worker picks it up, generates the questions, and directly pushes WebSocket events (`JOB_PROGRESS`, `JOB_COMPLETED`) to the clients so they see a live loading bar.
 
-## Highlights & Architecture
+---
 
-- **Secure REST Room Creation**: Room IDs are cryptographically generated via a standard REST API (`POST /api/game/create`) with internal collision retries, providing distinct separation between room establishment and WebSocket attachment.
-- **Multiplexed Fan-Out WebSocket Gateway**: Deprecated the standard 1-Redis-PubSub-per-WebSocket pattern. A singleton `EventGateway` now multiplexes all clients for a given room onto exactly one Redis Pub/Sub subscription. Message broadcasting uses `asyncio.gather` for concurrent delivery, preventing slow clients from causing broadcast storms.
-- **Reconnect-Safe Session Persistence**: WebSocket connection lifecycle is entirely decoupled from player identity. Clients can freely drop connection, refresh their browser, and seamlessly resume their session (`handle_rejoin`) without data loss or score resets.
-- **Passive Memory Management (TTL)**: Long-running or abandoned rooms are automatically cleaned up via a 2-hour Redis TTL to prevent memory leaks in production.
-- **AI Worker Dead-Room Protection**: The asynchronous ARQ worker constantly monitors room health during LLM batch generation. If a room is abandoned and its session is collected by the TTL, the AI worker instantly aborts generation to save compute resources.
-- **Dynamic CORS & Configuration**: Fully integrated `pydantic-settings` allowing complete control over AI temperature, batch sizes, connection timeouts, and origin enforcement via `.env`.
+## 🛠️ Setup Guide: Local Development (Hot-Reload)
 
-## Quick Start
+Use this setup when you are writing code and want instant hot-reloading. **Do not use Docker for the FastAPI app itself during development.**
 
-1. Create and activate a virtualenv:
-
+### 1. Prerequisites
+You need a database, Redis, and Ollama running. The easiest way is to use Docker for just the infrastructure:
 ```bash
+# This starts Postgres and Redis locally
+docker compose up db redis -d
+```
+
+### 2. Environment Setup (uv)
+We use `uv` (a blazing fast Python package manager) instead of standard `pip` or `poetry`.
+```bash
+# Create virtual environment and sync dependencies
 uv venv
 source .venv/bin/activate
 uv sync
 ```
 
-2. Configure your environment variables:
-
-Copy the example environment file and customize it. The application uses `pydantic-settings` to automatically load variables from the `.env` file.
-
+### 3. Configuration
+Copy the environment template:
 ```bash
 cp .env.example .env
 ```
+Ensure your `.env` points to your local infrastructure (e.g., `localhost`). If you are exposing your local server to the internet using **Microsoft Dev Tunnels** so friends can play, ensure your `CORS_ORIGINS` includes your Dev Tunnel frontend URL.
 
-**Required Infrastructure:**
-- A running PostgreSQL instance
-- A running Redis instance
-- Ollama running locally or remotely
-
-Example `.env` configuration:
-```env
-# Server
-HOST=0.0.0.0
-PORT=8000
-CORS_ORIGINS='["http://localhost:3000"]'
-
-# Infrastructure 
-
-# if Database and Redis are in you local
-DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/fastapi
-REDIS_URL=redis://localhost:6379/0
-
-# if you are using docker compose
-DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/fastapi
-REDIS_URL=redis://redis:6379/0
-
-# Game Logic
-MAX_PLAYERS=20
-MAX_TOPICS_PER_PLAYER=10
-SELECTED_TOPICS_PER_GAME=5
-QUESTION_TIME_LIMIT=60
-
-# AI / LLM Configuration
-OLLAMA_HOST=http://localhost:11434
-OLLAMA_MODEL=qwen3.5:4b
-LLM_TEMPERATURE=0.7
-LLM_TIMEOUT=120
-GENERATION_BATCH_SIZE=1
-```
-
-3. Apply DB migrations (ensure PostgreSQL is running):
-
+### 4. Database Migrations
+Create the SQL tables:
 ```bash
-.venv/bin/alembic -c alembic.ini upgrade head
+uv run alembic -c alembic.ini upgrade head
 ```
 
-4. Run the API and WebSockets server locally:
+### 5. Start the Servers
+You need two terminal windows running simultaneously:
 
+**Terminal A: The Web Server**
 ```bash
 uvicorn app.main:app --reload
 ```
 
-5. Run the background AI Worker:
-
-In a separate terminal window, start the ARQ worker to process AI generation jobs:
-
+**Terminal B: The AI Background Worker**
 ```bash
-arq app.ai.worker.WorkerSettings
+uv run arq app.ai.worker.WorkerSettings
 ```
 
-## Development
+---
 
-- Run tests:
+## 🚀 Setup Guide: Production Deployment (Docker)
 
-```bash
-pytest -q
+When deploying to a real server (VPS), you run everything inside Docker containers so it stays online forever and automatically restarts on failure.
+
+1. **Configure Environment:** Update the `.env` file to use Docker's internal networking hostnames (e.g., `db` instead of `localhost`):
+```env
+DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/fastapi
+REDIS_URL=redis://redis:6379/0
+# Assuming Ollama runs on the host machine, use the Docker bridge IP
+OLLAMA_HOST=http://172.17.0.1:11434 
 ```
 
-- Create an autogenerate migration:
-
+2. **Deploy the Stack:**
 ```bash
-.venv/bin/alembic -c alembic.ini revision --autogenerate -m "describe change"
+# Builds the images and starts API, Worker, Redis, and Postgres in the background
+docker compose up --build -d
 ```
 
-## Important files
+3. **Check Logs:**
+```bash
+# View backend logs
+docker compose logs -f app
 
-- `app/main.py` — application entry; registers routers and health/metrics
-- `app/websocket/router.py` — WebSocket gateway and event handling
-- `app/ai/worker.py` — AI worker job that generates and persists questions
-- `app/infrastructure/redis/session_repository.py` — session runtime storage & rehydration
-- `app/core/config.py` — environment schema and defaults
-- `alembic/` — migration scripts
+# View AI worker logs
+docker compose logs -f worker
+```
 
-## Comprehensive Configuration
+## 📂 Codebase Geography
 
-The application is highly configurable via the `.env` file. Notable keys include:
-
-- **Infrastructure**: `DATABASE_URL` (PostgreSQL), `REDIS_URL`
-- **Networking**: `HOST`, `PORT`, `CORS_ORIGINS` (JSON array of allowed frontend URLs)
-- **Gameplay**: `MAX_PLAYERS`, `MAX_TOPICS_PER_PLAYER`, `SELECTED_TOPICS_PER_GAME`, `QUESTION_TIME_LIMIT`
-- **AI/LLM Engine**:
-  - `OLLAMA_HOST` & `OLLAMA_MODEL`
-  - `LLM_TEMPERATURE` — Adjusts generation creativity (e.g., `0.2` for strictness, `0.9` for varied questions)
-  - `GENERATION_BATCH_SIZE` — Number of questions to generate per LLM call
-  - `TOTAL_QUESTIONS` — Target number of questions for a full game
-
-## CI / Observability
-
-- CI runs lint and tests in `.github/workflows/ci.yml`
-- Metrics exposed at `/metrics` using `prometheus_client`
-
-## Contribution & Next Steps
-
-- Ensure migrations are committed after model changes
-- Add end-to-end WebSocket + DB tests (recommended with docker-compose)
-- Expand AI job observability and retry policies
-
-Enjoy building — ask me to scaffold more docs, CI steps, or an integration test harness.
+* `app/websocket/router.py`: The entry point for all socket messages.
+* `app/websocket/handlers.py`: The business logic. **Intent Note:** Notice that mutations are wrapped in `async with game_service.store.get_lock()`. This prevents a race condition where two players answer a question at the exact same millisecond, read the same state, and overwrite each other's updates.
+* `app/services/game_loop.py`: An infinite `asyncio` loop that manages the active countdown timer and transitions the game phase (Lobby → Progress → Finished).
+* `app/ai/worker.py`: The ARQ consumer that asks Ollama for questions, parses the JSON, and writes to the DB.
