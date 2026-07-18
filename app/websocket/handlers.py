@@ -227,6 +227,8 @@ class WebSocketEventHandlers:
             "is_topic_collection_active": bool(session.chosen_topic_submitters and session.state.value == "lobby"),
             "pending_topic_count": len(session.pending_topic_submitters),
             "host_id": session.host_id,
+            "difficulty": session.difficulty,
+            "question_count": session.question_count,
             "players": [
                 {"id": p.id, "name": p.name, "score": p.score}
                 for p in session.players.values()
