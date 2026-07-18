@@ -71,23 +71,24 @@ class GameService:
         adjectives = ["swift", "brave", "mighty", "clever", "silent", "wild", "fast", "cool", "epic", "bold", "dark", "light", "super", "hyper", "mega", "ultra", "neon", "cyber", "cosmic", "stellar", "quantum", "magic", "mystic"]
         nouns = ["fox", "bear", "wolf", "hawk", "lion", "tiger", "eagle", "shark", "ninja", "robot", "dragon", "wizard", "knight", "ghost", "viper", "cobra", "falcon", "raven", "panther", "lynx", "griffin", "phoenix"]
         
-        for _ in range(5):
+        for _ in range(10):
             adj = secrets.choice(adjectives)
             noun = secrets.choice(nouns)
             num = secrets.choice(range(100))
             room_id = f"{adj}-{noun}-{num}"
             
-            try:
-                # We attempt to create the session in the DB using the regular create_session method,
-                # but we need to catch the DB exception. Since create_session manages its own uow,
-                # if an IntegrityError occurs, it will bubble up here and the uow will have rolled back safely.
-                await self.create_session(room_id)
-                return room_id
-            except IntegrityError:
-                logger.warning("room_id_collision", room_id=room_id)
+            # Fast path: only check if the room is currently active in Redis.
+            # We don't care if it exists as an old completed match in the DB,
+            # because create_session will just append a new Match record, and 
+            # our get_by_room queries always fetch the most recent one.
+            if await self.get_session(room_id):
+                logger.warning("room_id_collision_active_session", room_id=room_id)
                 continue
+            
+            await self.create_session(room_id)
+            return room_id
                 
-        raise RuntimeError("Failed to generate a unique room ID after 5 attempts")
+        raise RuntimeError("Failed to generate a unique room ID after 10 attempts")
 
     async def get_session(self, room_id: str) -> GameSession | None:
         """Return the active session for a room, or None if it does not exist."""

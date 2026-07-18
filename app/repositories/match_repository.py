@@ -24,7 +24,10 @@ class MatchRepository:
 
     async def get_by_room(self, room_id: str) -> Match | None:
         result = await self.session.execute(
-            select(Match).where(Match.room_id == room_id)
+            select(Match)
+            .where(Match.room_id == room_id)
+            .order_by(desc(Match.created_at))
+            .limit(1)
         )
         return result.scalar_one_or_none()
 

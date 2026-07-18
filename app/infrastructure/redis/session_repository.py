@@ -136,6 +136,11 @@ class SessionRepository:
                 for player_entry in match_players
                 if player_entry.player is not None
             }
+            
+            # The database doesn't explicitly store host_id in the Match model.
+            # If we rehydrate, assign the first player as the host so the room isn't orphaned.
+            if session.players:
+                session.host_id = next(iter(session.players.values())).id
 
             for answer_row in answers:
                 question_key = str(answer_row.question_id)

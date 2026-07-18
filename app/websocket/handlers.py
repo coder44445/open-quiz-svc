@@ -84,39 +84,40 @@ class WebSocketEventHandlers:
     @staticmethod
     async def handle_force_start(ctx: ConnectionContext, payload: ForceStartEvent) -> None:
         """Host manually triggers game start with whatever topics exist so far."""
-        session = await game_service.get_session(ctx.room_id)
-        if not session:
-            ctx.log.warning("force_start_ignored_no_session")
-            return
+        async with game_service.store.get_lock(ctx.room_id):
+            session = await game_service.get_session(ctx.room_id)
+            if not session:
+                ctx.log.warning("force_start_ignored_no_session")
+                return
 
-        from app.domain.game.state import GameState
-        if session.state != GameState.LOBBY:
-            ctx.log.warning("force_start_ignored_wrong_state", state=session.state.value)
-            return
+            from app.domain.game.state import GameState
+            if session.state != GameState.LOBBY:
+                ctx.log.warning("force_start_ignored_wrong_state", state=session.state.value)
+                return
 
-        # Clear pending list so the auto-start guard doesn't block us
-        session.pending_topic_submitters = []
-        if not session.topics:
-            session.topics = ["General Knowledge"]
-        from app.infrastructure.redis.session_repository import SessionRepository
-        await SessionRepository().save(session)
+            # Clear pending list so the auto-start guard doesn't block us
+            session.pending_topic_submitters = []
+            if not session.topics:
+                session.topics = ["General Knowledge"]
+            await game_service.store.save(session)
 
-        await event_bus.publish(GameEvent(
-            type=EventType.TOPICS_COLLECTED,
-            room_id=ctx.room_id,
-            payload={"pending_remaining": 0, "forced": True},
-        ))
-        try:
-            await game_service.start_game(ctx.room_id)
-        except Exception as e:
-            ctx.log.warning("force_start_failed", error=str(e))
+            await event_bus.publish(GameEvent(
+                type=EventType.TOPICS_COLLECTED,
+                room_id=ctx.room_id,
+                payload={"pending_remaining": 0, "forced": True},
+            ))
+            try:
+                await game_service.start_game(ctx.room_id)
+            except Exception as e:
+                ctx.log.warning("force_start_failed", error=str(e))
 
     @staticmethod
     async def handle_start(ctx: ConnectionContext, payload: StartEvent) -> None:
-        try:
-            await game_service.request_topics(ctx.room_id)
-        except Exception as e:
-            ctx.log.warning("request_topics_failed", error=str(e))
+        async with game_service.store.get_lock(ctx.room_id):
+            try:
+                await game_service.request_topics(ctx.room_id)
+            except Exception as e:
+                ctx.log.warning("request_topics_failed", error=str(e))
 
     @staticmethod
     async def handle_begin(ctx: ConnectionContext, payload: BeginEvent) -> None:
