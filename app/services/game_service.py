@@ -74,15 +74,17 @@ class GameService:
         for _ in range(10):
             adj = secrets.choice(adjectives)
             noun = secrets.choice(nouns)
-            num = secrets.choice(range(100))
+            num = secrets.choice(range(1000, 9999))
             room_id = f"{adj}-{noun}-{num}"
             
-            # Fast path: only check if the room is currently active in Redis.
-            # We don't care if it exists as an old completed match in the DB,
-            # because create_session will just append a new Match record, and 
-            # our get_by_room queries always fetch the most recent one.
-            if await self.get_session(room_id):
-                logger.warning("room_id_collision_active_session", room_id=room_id)
+            # Check the DB to guarantee global uniqueness. Even though room_id isn't 
+            # strictly unique=True in the DB schema yet, we want to prevent duplicate 
+            # room_ids so old match history doesn't get shadowed.
+            # With 4.5 million combinations, this will almost always succeed on the first try.
+            async with self.uow_factory() as uow:
+                existing = await uow.matches.get_by_room(room_id)
+            if existing:
+                logger.warning("room_id_collision_db", room_id=room_id)
                 continue
             
             await self.create_session(room_id)
