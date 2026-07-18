@@ -383,11 +383,17 @@ class GameService:
         ))
 
         # Mirror the state change to the durable match record.
-        async with self.uow_factory() as uow:
-            match = await uow.matches.get_by_room(room_id)
-            if match:
-                match.state = GameState.GENERATING.value
-                await uow.matches.save(match)
+        import asyncio
+        async def _persist_generation_state():
+            try:
+                async with self.uow_factory() as uow:
+                    match = await uow.matches.get_by_room(room_id)
+                    if match:
+                        match.state = GameState.GENERATING.value
+                        await uow.matches.save(match)
+            except Exception:
+                logger.exception("match_state_persistence_failed", room_id=room_id, state="generating")
+        asyncio.create_task(_persist_generation_state())
 
         await create_generation_job(
             room_id=room_id,
@@ -430,11 +436,17 @@ class GameService:
         logger.info("game_started", room_id=room_id, question_started_at=session.question_started_at)
 
         # Mirror the state change and start timestamp to the durable match record.
-        async with self.uow_factory() as uow:
-            match = await uow.matches.get_by_room(room_id)
-            if match:
-                match.state = GameState.IN_PROGRESS.value
-                match.started_at = datetime.now(timezone.utc)
-                await uow.matches.save(match)
+        import asyncio
+        async def _persist_in_progress_state():
+            try:
+                async with self.uow_factory() as uow:
+                    match = await uow.matches.get_by_room(room_id)
+                    if match:
+                        match.state = GameState.IN_PROGRESS.value
+                        match.started_at = datetime.now(timezone.utc)
+                        await uow.matches.save(match)
+            except Exception:
+                logger.exception("match_state_persistence_failed", room_id=room_id, state="in_progress")
+        asyncio.create_task(_persist_in_progress_state())
 
         return session
