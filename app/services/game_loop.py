@@ -51,8 +51,7 @@ class GameLoop:
 
         logger.info("game_loop_started", room_id=room_id, question_count=len(session.questions))
 
-        from app.core.config import settings
-        expected_questions = settings.total_questions
+        expected_questions = session.question_count
         question_index = 0
 
         while question_index < expected_questions:

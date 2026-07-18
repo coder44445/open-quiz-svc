@@ -49,6 +49,10 @@ class ConfigureEvent(BaseClientEvent):
     question_count: int = 15
 
 # A discriminated union based on the "type" field
+class LeaveEvent(BaseClientEvent):
+    """Player intentionally leaves the lobby."""
+    type: Literal["leave"] = "leave"
+
 ClientEventPayload = Annotated[
     Union[
         JoinEvent,
@@ -61,6 +65,7 @@ ClientEventPayload = Annotated[
         ChatEvent,
         KickEvent,
         ConfigureEvent,
+        LeaveEvent,
     ],
     Field(discriminator="type")
 ]

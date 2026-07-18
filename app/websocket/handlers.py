@@ -16,7 +16,7 @@ from app.domain.events import GameEvent
 from app.domain.event_types import EventType
 from app.websocket.schemas import (
     JoinEvent, TopicEvent, StartEvent, BeginEvent, AnswerEvent, RejoinEvent,
-    ForceStartEvent, ChatEvent, KickEvent, ConfigureEvent,
+    ForceStartEvent, ChatEvent, KickEvent, ConfigureEvent, LeaveEvent,
 )
 
 logger = structlog.get_logger(__name__)
@@ -68,18 +68,19 @@ class WebSocketEventHandlers:
 
     @staticmethod
     async def handle_topic(ctx: ConnectionContext, payload: TopicEvent) -> None:
-        try:
-            await game_service.add_topic(ctx.room_id, payload.text, ctx.player_id)
-        except ValueError as exc:
-            ctx.log.warning("topic_rejected", reason=str(exc))
-            return
+        async with game_service.store.get_lock(ctx.room_id):
+            try:
+                await game_service.add_topic(ctx.room_id, payload.text, ctx.player_id)
+            except ValueError as exc:
+                ctx.log.warning("topic_rejected", reason=str(exc))
+                return
 
-        # Broadcast to ALL clients in the room so everyone sees the topic appear.
-        await event_bus.publish(GameEvent(
-            type=EventType.TOPIC_ADDED,
-            room_id=ctx.room_id,
-            payload={"topic": payload.text},
-        ))
+            # Broadcast to ALL clients in the room so everyone sees the topic appear.
+            await event_bus.publish(GameEvent(
+                type=EventType.TOPIC_ADDED,
+                room_id=ctx.room_id,
+                payload={"topic": payload.text},
+            ))
 
     @staticmethod
     async def handle_force_start(ctx: ConnectionContext, payload: ForceStartEvent) -> None:
@@ -151,35 +152,36 @@ class WebSocketEventHandlers:
 
     @staticmethod
     async def handle_answer(ctx: ConnectionContext, payload: AnswerEvent) -> None:
-        session = await game_service.get_session(ctx.room_id)
-        if not session:
-            ctx.log.warning("answer_ignored_no_session")
-            return
+        async with game_service.store.get_lock(ctx.room_id):
+            session = await game_service.get_session(ctx.room_id)
+            if not session:
+                ctx.log.warning("answer_ignored_no_session")
+                return
 
-        current_q = session.get_current_question()
-        if not current_q:
-            ctx.log.warning("answer_ignored_no_current_question")
-            return
+            current_q = session.get_current_question()
+            if not current_q:
+                ctx.log.warning("answer_ignored_no_current_question")
+                return
 
-        answer = Answer(
-            player_id=payload.player_id,
-            question_id=current_q.id,
-            selected_index=payload.selected,
-            time_taken=payload.time_taken,
-        )
+            answer = Answer(
+                player_id=payload.player_id,
+                question_id=current_q.id,
+                selected_index=payload.selected,
+                time_taken=payload.time_taken,
+            )
 
-        try:
-            score = await answer_service.submit_answer(ctx.room_id, answer)
-        except ValueError as exc:
-            # Non-fatal: duplicate or invalid answer
-            ctx.log.warning("answer_rejected", player_id=payload.player_id, reason=str(exc))
-            await ctx.websocket.send_json({"type": "answer_rejected", "reason": str(exc)})
-            return
+            try:
+                score = await answer_service.submit_answer(ctx.room_id, answer)
+            except ValueError as exc:
+                # Non-fatal: duplicate or invalid answer
+                ctx.log.warning("answer_rejected", player_id=payload.player_id, reason=str(exc))
+                await ctx.websocket.send_json({"type": "answer_rejected", "reason": str(exc)})
+                return
 
-        await ctx.websocket.send_json({
-            "type": "answer_received",
-            "score": score,
-        })
+            await ctx.websocket.send_json({
+                "type": "answer_received",
+                "score": score,
+            })
 
     @staticmethod
     async def handle_rejoin(ctx: ConnectionContext, payload: RejoinEvent) -> None:
@@ -300,23 +302,24 @@ class WebSocketEventHandlers:
     async def handle_configure(ctx: ConnectionContext, payload: ConfigureEvent) -> None:
         from app.domain.game.state import GameState
         from app.core.config import settings
-        session = await game_service.get_session(ctx.room_id)
-        if not session:
-            return
+        async with game_service.store.get_lock(ctx.room_id):
+            session = await game_service.get_session(ctx.room_id)
+            if not session:
+                return
 
-        if session.host_id != ctx.player_id:
-            ctx.log.warning("configure_rejected_not_host", requester=ctx.player_id)
-            return
+            if session.host_id != ctx.player_id:
+                ctx.log.warning("configure_rejected_not_host", requester=ctx.player_id)
+                return
 
-        if session.state != GameState.LOBBY:
-            ctx.log.warning("configure_rejected_wrong_state", state=session.state.value)
-            return
+            if session.state != GameState.LOBBY:
+                ctx.log.warning("configure_rejected_wrong_state", state=session.state.value)
+                return
 
-        max_q = 20
-        question_count = max(5, min(max_q, payload.question_count))
-        session.difficulty = payload.difficulty
-        session.question_count = question_count
-        await game_service.store.save(session)
+            # Allow up to 50 questions (UI currently maxes at 20)
+            question_count = max(5, min(50, payload.question_count))
+            session.difficulty = payload.difficulty
+            session.question_count = question_count
+            await game_service.store.save(session)
 
         await event_bus.publish(
             GameEvent(
@@ -326,3 +329,13 @@ class WebSocketEventHandlers:
             )
         )
         ctx.log.info("game_configured", difficulty=session.difficulty, question_count=session.question_count)
+
+    @staticmethod
+    async def handle_leave(ctx: ConnectionContext, payload: LeaveEvent) -> None:
+        """Handle an intentional leave by completely removing the player."""
+        async with game_service.store.get_lock(ctx.room_id):
+            session = await game_service.get_session(ctx.room_id)
+            if not session or ctx.player_id not in session.players:
+                return
+            await game_service.remove_player(ctx.room_id, ctx.player_id)
+            ctx.log.info("player_left_intentionally", player_id=ctx.player_id)

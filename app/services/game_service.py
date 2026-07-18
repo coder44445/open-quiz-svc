@@ -174,6 +174,12 @@ class GameService:
         # Also remove from pending topic submitters if they disconnect mid-collection
         if player_id in session.pending_topic_submitters:
             session.pending_topic_submitters.remove(player_id)
+            # Broadcast the updated count so the UI doesn't hang waiting for dead connections
+            await event_bus.publish(GameEvent(
+                type=EventType.TOPICS_COLLECTED,
+                room_id=room_id,
+                payload={"pending_remaining": len(session.pending_topic_submitters)},
+            ))
 
         logger.info("player_removed", room_id=room_id, player_id=player_id)
 
@@ -207,10 +213,22 @@ class GameService:
                 session.chosen_topic_submitters
                 and not session.pending_topic_submitters
                 and session.state == GameState.LOBBY
-                and session.topics
             ):
-                logger.info("pending_empty_after_disconnect_auto_starting", room_id=room_id)
-                await self.start_game(room_id)
+                if session.topics:
+                    logger.info("pending_empty_after_disconnect_auto_starting", room_id=room_id)
+                    try:
+                        await self.start_game(room_id)
+                    except Exception as e:
+                        logger.error("auto_start_failed", room_id=room_id, error=str(e))
+                else:
+                    logger.info("topic_collection_cancelled_no_topics", room_id=room_id)
+                    session.chosen_topic_submitters = []
+                    await self.store.save(session)
+                    await event_bus.publish(GameEvent(
+                        type=EventType.TOPICS_COLLECTED,
+                        room_id=room_id,
+                        payload={"pending_remaining": 0},
+                    ))
 
 
     async def add_topic(self, room_id: str, topic: str, player_id: str | None = None) -> None:
