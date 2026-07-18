@@ -287,6 +287,33 @@ async def generate_questions(ctx, job_id: str) -> None:
             raise
 
 
+async def cleanup_abandoned_matches(ctx) -> None:
+    """Periodic task: mark Match rows stuck in non-terminal states as 'abandoned'.
+
+    Runs every 24 hours. Targets rooms that were created more than 3 hours ago
+    but never reached 'finished' — i.e. the host abandoned the game before it
+    started, or the game crashed mid-generation.
+
+    The 3-hour window is generous enough to exclude any game still legitimately
+    in progress (longest possible game: 20 questions × ~2 min each = 40 min).
+    """
+    from datetime import datetime, timezone, timedelta
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=3)
+
+    async with UnitOfWork() as uow:
+        stale = await uow.matches.find_stale(
+            states=["lobby", "generating"],
+            before=cutoff,
+        )
+        if not stale:
+            logger.info("cleanup_no_stale_matches")
+            return
+
+        for match in stale:
+            match.state = "abandoned"
+
+    logger.info("cleanup_abandoned_matches_done", count=len(stale))
+    
 class WorkerSettings:
     """ARQ worker configuration.
 
@@ -323,31 +350,3 @@ class WorkerSettings:
             logger.info("arq_worker_redis_closed")
         except Exception:
             logger.warning("arq_worker_redis_close_failed")
-
-
-async def cleanup_abandoned_matches(ctx) -> None:
-    """Periodic task: mark Match rows stuck in non-terminal states as 'abandoned'.
-
-    Runs every 24 hours. Targets rooms that were created more than 3 hours ago
-    but never reached 'finished' — i.e. the host abandoned the game before it
-    started, or the game crashed mid-generation.
-
-    The 3-hour window is generous enough to exclude any game still legitimately
-    in progress (longest possible game: 20 questions × ~2 min each = 40 min).
-    """
-    from datetime import datetime, timezone, timedelta
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=3)
-
-    async with UnitOfWork() as uow:
-        stale = await uow.matches.find_stale(
-            states=["lobby", "generating"],
-            before=cutoff,
-        )
-        if not stale:
-            logger.info("cleanup_no_stale_matches")
-            return
-
-        for match in stale:
-            match.state = "abandoned"
-
-    logger.info("cleanup_abandoned_matches_done", count=len(stale))

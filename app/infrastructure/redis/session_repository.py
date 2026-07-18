@@ -116,7 +116,17 @@ class SessionRepository:
             session.event_bus = GameEventBus()
             session.match_id = match.id
             session.state = GameState(match.state)
-            session.questions = [Question(**question.question_json) for question in questions]
+            session.questions = [
+                Question(
+                    id=question.order,
+                    topic=question.topic,
+                    difficulty=question.difficulty,
+                    text=question.text,
+                    options=question.options,
+                    correct_index=question.correct_index,
+                )
+                for question in questions
+            ]
             session.players = {
                 player_entry.player.id: Player(
                     name=player_entry.player.name,

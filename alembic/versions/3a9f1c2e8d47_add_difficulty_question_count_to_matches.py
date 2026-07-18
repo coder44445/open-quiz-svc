@@ -1,12 +1,12 @@
 """add difficulty, question_count to matches; add composite state+created_at index
 
 Revision ID: 3a9f1c2e8d47
-Revises: 11b8e3e66b77
+Revises: 6ae400a1dd89
 Create Date: 2026-07-17 10:26:00.000000
 """
 
 revision = '3a9f1c2e8d47'
-down_revision = '11b8e3e66b77'
+down_revision = '6ae400a1dd89'
 branch_labels = None
 depends_on = None
 

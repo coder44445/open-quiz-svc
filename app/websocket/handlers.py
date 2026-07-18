@@ -263,7 +263,7 @@ class WebSocketEventHandlers:
             return
 
         if session.host_id != ctx.player_id:
-            ctx.log.warning("kick_rejected_not_host", requester=ctx.player_id)
+            ctx.log.warning("kick_rejected_not_host", requester=ctx.player_id,host_id=session.host_id)
             await ctx.websocket.send_json({"type": "error", "message": "Only the host can kick players."})
             return
 
