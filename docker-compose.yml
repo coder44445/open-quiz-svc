@@ -62,7 +62,7 @@ services:
     build: .
     # Override the default entrypoint so the container runs the ARQ worker
     # instead of uvicorn.
-    entrypoint: ["python", "-m", "arq", "app.ai.worker.WorkerSettings"]
+    entrypoint: ["uv", "run", "arq", "app.ai.worker.WorkerSettings"]
     restart: on-failure
     depends_on:
       db:
