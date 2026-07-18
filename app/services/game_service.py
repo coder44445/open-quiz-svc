@@ -106,6 +106,10 @@ class GameService:
             logger.warning("session_missing_for_player_join", room_id=room_id)
             raise ValueError("Room does not exist")
 
+        if session.state in (GameState.FINISHED, GameState.ABANDONED):
+            logger.warning("join_rejected_game_over", room_id=room_id, state=session.state.value)
+            raise ValueError(f"Session expired: game is {session.state.value}")
+
         session.add_player(player)
         await self.store.save(session)
         logger.info(

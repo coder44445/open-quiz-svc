@@ -188,6 +188,12 @@ class WebSocketEventHandlers:
                 ctx.log.warning("rejoin_ignored_no_session", player_id=payload.player_id)
                 return
 
+            from app.domain.game.state import GameState
+            if session.state in (GameState.FINISHED, GameState.ABANDONED):
+                ctx.log.warning("rejoin_rejected_game_over", player_id=payload.player_id, state=session.state.value)
+                await ctx.websocket.send_json({"type": "error", "message": f"Session expired: game is {session.state.value}"})
+                return
+
             if payload.player_id not in session.players:
                 ctx.log.warning("rejoin_ignored_player_not_found", player_id=payload.player_id)
                 await ctx.websocket.send_json({"type": "error", "message": "Session expired or player removed."})
