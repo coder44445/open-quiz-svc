@@ -65,6 +65,7 @@ class SessionRepository:
         # Attach event bus so the domain session can publish sync/state events.
         session.event_bus = GameEventBus()
         session.match_id = raw.get("match_id")
+        session.host_id = raw.get("host_id")
         session.players = {
             player_id: Player(**player_data)
             for player_id, player_data in raw.get("players", {}).items()
@@ -171,6 +172,7 @@ class SessionRepository:
         return {
             "room_id": session.room_id,
             "match_id": session.match_id,
+            "host_id": session.host_id,
             "players": {
                 player_id: {
                     "id": player.id,
