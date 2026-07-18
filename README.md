@@ -45,9 +45,15 @@ HOST=0.0.0.0
 PORT=8000
 CORS_ORIGINS='["http://localhost:3000"]'
 
-# Infrastructure
+# Infrastructure 
+
+# if Database and Redis are in you local
 DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/fastapi
 REDIS_URL=redis://localhost:6379/0
+
+# if you are using docker compose
+DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/fastapi
+REDIS_URL=redis://redis:6379/0
 
 # Game Logic
 MAX_PLAYERS=20
