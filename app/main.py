@@ -23,6 +23,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# [ARCHITECTURE INTENT: Strict CORS]
+# WebSocket handshakes often rely on HTTP headers (like cookies or auth tokens).
+# We set `allow_credentials=True` to support this, but doing so means we CANNOT 
+# use `allow_origins=["*"]` for security reasons. 
+# Origins must be strictly passed via the environment variables.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,

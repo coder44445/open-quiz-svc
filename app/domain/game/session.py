@@ -21,12 +21,13 @@ class GameSession:
     """
     Represents a single running quiz match.
 
-    Owns:
-    - players
-    - topics
-    - questions
-    - scores
-    - game state
+    [ARCHITECTURE INTENT: Pure State Machine]
+    This class is the absolute source of truth for a game room. It manages all 
+    data (players, scores, topics, active question) and enforces state machine 
+    transitions (e.g., LOBBY -> IN_PROGRESS -> FINISHED) via the state_controller.
+    
+    Because this is cached in Redis, it must remain serialisable as a pure dataclass.
+    Avoid injecting active I/O clients (like DB sessions) directly into this model.
     """
 
     room_id: str

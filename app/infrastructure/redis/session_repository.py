@@ -54,6 +54,11 @@ class SessionRepository:
             Hydrated GameSession, or None if the room has no match record.
         """
 
+        # [ARCHITECTURE INTENT: Database Rehydration]
+        # Redis is treated as an ephemeral cache for ultra-fast gameplay.
+        # If Redis crashes, or if the 2-hour TTL expires, the game data is not lost.
+        # A cache-miss triggers a fallback to PostgreSQL to rebuild the exact `GameSession` 
+        # state in memory so the game can continue without the players noticing a disruption.
         data = await self.redis.get(f"session:{room_id}")
 
         if not data:

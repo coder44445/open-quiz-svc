@@ -100,7 +100,12 @@ async def generate_questions(ctx, job_id: str) -> None:
             
         generated_count = 0
 
-        # Generate questions in batches.
+        # [ARCHITECTURE INTENT: Generative Batching]
+        # We do not ask the LLM to generate 20 questions in a single prompt.
+        # Large outputs often cause local LLMs (like Ollama on smaller GPUs) to OOM,
+        # hallucinate JSON structures, or exceed the context window.
+        # By chunking into small batches (e.g., 2 at a time), we ensure high reliability
+        # and valid JSON parsing, even if it takes slightly longer overall.
         while generated_count < job.count:
             current_batch_size = min(batch_size, job.count - generated_count)
             
@@ -112,6 +117,10 @@ async def generate_questions(ctx, job_id: str) -> None:
             
             batch_questions = None
             
+            # [ARCHITECTURE INTENT: Exponential Backoff & Retry]
+            # LLMs are non-deterministic. Sometimes they will output malformed JSON 
+            # or refuse to answer. We wrap every generation batch in a retry loop.
+            # If the parser fails, we immediately try again (up to max_attempts) to self-heal.
             for attempt in range(1, max_attempts + 1):
                 metrics.mark_attempt()
                 attempt_start = time.perf_counter()
