@@ -46,6 +46,7 @@ services:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       OLLAMA_HOST: ${OLLAMA_HOST:-http://ollama:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3.5:0.8b}
+      CORS_ORIGINS: ${CORS_ORIGINS:-'["http://localhost:3000"]'}
     ports:
       - "8000:8000"
     healthcheck:
