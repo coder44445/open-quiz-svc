@@ -10,9 +10,6 @@ from app.domain.player.model import Player
 from app.domain.question.model import Question
 from app.domain.game.answer import Answer
 from app.domain.game.state import GameState
-from app.infrastructure.database.models.match import Match
-from app.infrastructure.database.models.answer import Answer as AnswerModel
-from app.infrastructure.database.models.match_player import MatchPlayer
 from app.infrastructure.database.unit_of_work import UnitOfWork
 from app.infrastructure.events.event_bus import GameEventBus
 from app.infrastructure.redis.client import create_redis_client

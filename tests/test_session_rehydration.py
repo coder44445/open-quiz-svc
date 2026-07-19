@@ -1,4 +1,3 @@
-import asyncio
 import os
 
 import pytest
@@ -47,8 +46,6 @@ uow_module.UnitOfWork = FakeUoW
 sys.modules['app.infrastructure.database.unit_of_work'] = uow_module
 
 from app.infrastructure.redis.session_repository import SessionRepository
-from app.domain.question.model import Question
-from app.domain.game.answer import Answer
 
 
 class DummyRedis:

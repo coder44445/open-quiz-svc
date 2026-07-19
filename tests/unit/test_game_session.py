@@ -1,4 +1,3 @@
-import time
 from app.domain.game.session import GameSession
 from app.domain.player.model import Player
 from app.domain.question.model import Question

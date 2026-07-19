@@ -66,7 +66,6 @@ class GameService:
 
     async def create_unique_session(self) -> str:
         import secrets
-        from sqlalchemy.exc import IntegrityError
         
         adjectives = ["swift", "brave", "mighty", "clever", "silent", "wild", "fast", "cool", "epic", "bold", "dark", "light", "super", "hyper", "mega", "ultra", "neon", "cyber", "cosmic", "stellar", "quantum", "magic", "mystic"]
         nouns = ["fox", "bear", "wolf", "hawk", "lion", "tiger", "eagle", "shark", "ninja", "robot", "dragon", "wizard", "knight", "ghost", "viper", "cobra", "falcon", "raven", "panther", "lynx", "griffin", "phoenix"]

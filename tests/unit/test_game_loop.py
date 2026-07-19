@@ -1,4 +1,3 @@
-import asyncio
 import types
 
 import pytest

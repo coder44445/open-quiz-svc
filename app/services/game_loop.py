@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import asdict
 from datetime import datetime, timezone
 
 from app.core.logging import logger

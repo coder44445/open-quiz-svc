@@ -308,7 +308,6 @@ class WebSocketEventHandlers:
     @staticmethod
     async def handle_configure(ctx: ConnectionContext, payload: ConfigureEvent) -> None:
         from app.domain.game.state import GameState
-        from app.core.config import settings
         async with game_service.store.get_lock(ctx.room_id):
             session = await game_service.get_session(ctx.room_id)
             if not session:

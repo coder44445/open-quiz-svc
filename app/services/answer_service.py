@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from app.core.logging import logger
-from app.core.redis import redis
 from app.domain.game.answer import Answer
 from app.domain.game.scoring import ScoringService
 from app.infrastructure.database.unit_of_work import UnitOfWork

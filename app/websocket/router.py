@@ -1,15 +1,10 @@
 from __future__ import annotations
 
-import asyncio
-import time
-from dataclasses import asdict
 
-import structlog
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from pydantic import ValidationError
 
-from app.core.logging import logger
 from app.websocket.event_gateway import EventGateway
 from app.websocket.schemas import (
     ClientEventAdapter, JoinEvent, TopicEvent, StartEvent,
