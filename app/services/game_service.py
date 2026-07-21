@@ -230,7 +230,7 @@ class GameService:
                     ))
 
 
-    async def add_topic(self, room_id: str, topic: str, player_id: str | None = None) -> None:
+    async def add_topic(self, room_id: str, topic: str, difficulty: str = "medium", player_id: str | None = None) -> None:
         """Append a topic to the session's topic list.
 
         During topic collection: each chosen player can submit exactly one topic.
@@ -258,7 +258,7 @@ class GameService:
         if not topic:
             return
 
-        session.add_topic(topic)
+        session.add_topic({"text": topic, "difficulty": difficulty})
 
         # Topic collection flow: mark player as done
         if player_id and player_id in session.pending_topic_submitters:
@@ -348,7 +348,12 @@ class GameService:
                 ))
                 # Add default topic if none submitted
                 if not current_session.topics:
-                    await self.add_topic(room_id, "General Knowledge")
+                    # If host started without gathering topics, inject a default
+                    if not current_session.players:
+                        # Defensive fallback (should never happen via UI)
+                        await self.add_topic(room_id, "General Knowledge", "medium")
+                    else:
+                        await self.add_topic(room_id, "General Knowledge", "medium", current_session.host_id)
                 await self.start_game(room_id)
 
         asyncio.create_task(_timeout_task())
@@ -417,7 +422,7 @@ class GameService:
 
         await create_generation_job(
             room_id=room_id,
-            topics=session.topics,
+            topics=[t["text"] for t in session.topics],
             difficulty=Difficulty(session.difficulty),
             count=count,
         )

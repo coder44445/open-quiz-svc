@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import Integer, Float, String, ForeignKey, UniqueConstraint
+from sqlalchemy import Integer, Float, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from typing import TYPE_CHECKING
 

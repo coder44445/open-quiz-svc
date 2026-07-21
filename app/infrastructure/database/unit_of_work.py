@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import structlog
 
-from typing import AsyncIterator
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 

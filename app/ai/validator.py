@@ -138,15 +138,19 @@ async def verify_questions(
             "model appears to be defaulting. Retrying batch."
         )
 
-    verified: list[Question] = []
+    import asyncio
+
     for q in questions:
         lower_text = q.text.lower()
         has_negation = any(w in lower_text.split() for w in NEGATION_WORDS)
         if has_negation:
             logger.info("verify_negation_question_flagged", question_text=q.text[:80])
 
-        verifier_index = await provider.verify_question(q.text, q.options)
+    verify_tasks = [provider.verify_question(q.text, q.options) for q in questions]
+    verifier_indexes = await asyncio.gather(*verify_tasks)
 
+    verified: list[Question] = []
+    for q, verifier_index in zip(questions, verifier_indexes):
         if verifier_index is None:
             # Inconclusive — keep the original and move on
             verified.append(q)

@@ -70,7 +70,7 @@ class WebSocketEventHandlers:
     async def handle_topic(ctx: ConnectionContext, payload: TopicEvent) -> None:
         async with game_service.store.get_lock(ctx.room_id):
             try:
-                await game_service.add_topic(ctx.room_id, payload.text, ctx.player_id)
+                await game_service.add_topic(ctx.room_id, payload.text, payload.difficulty, ctx.player_id)
             except ValueError as exc:
                 ctx.log.warning("topic_rejected", reason=str(exc))
                 return
@@ -79,7 +79,7 @@ class WebSocketEventHandlers:
             await event_bus.publish(GameEvent(
                 type=EventType.TOPIC_ADDED,
                 room_id=ctx.room_id,
-                payload={"topic": payload.text},
+                payload={"topic": payload.text, "difficulty": payload.difficulty},
             ))
 
     @staticmethod

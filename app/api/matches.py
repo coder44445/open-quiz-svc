@@ -93,9 +93,12 @@ async def get_match(room_id: str) -> MatchDetail:
         if not match or match.state != "finished":
             raise HTTPException(status_code=404, detail="Match not found")
 
-        players = await uow.matches.get_players(match.id)
-        questions = await uow.matches.get_questions(match.id)
-        answers = await uow.matches.get_answers(match.id)
+        import asyncio
+        players, questions, answers = await asyncio.gather(
+            uow.matches.get_players(match.id),
+            uow.matches.get_questions(match.id),
+            uow.matches.get_answers(match.id)
+        )
 
     # Build an order-index map for O(1) lookup when assembling answer details
     q_order_by_db_id = {q.id: q.order for q in questions}

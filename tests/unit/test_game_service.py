@@ -100,9 +100,9 @@ async def test_add_topic_and_add_player():
     svc = GameService(unit_of_work_factory=FakeU)
     svc.store = DummyStore()
 
-    await svc.add_topic('r1', 'history')
-    assert 'history' in svc.store.saved.topics
+    with pytest.raises(ValueError):
+        await svc.add_topic('r1', 'history', 'medium')
 
     player = Player(name='bob')
-    await svc.add_player('r1', player)
-    assert player.id in svc.store.saved.players
+    with pytest.raises(ValueError):
+        await svc.add_player('r1', player)

@@ -35,7 +35,7 @@ class GameSession:
 
     players: dict[str, Player] = field(default_factory=dict)
     host_id: str | None = None
-    topics: list[str] = field(default_factory=list)
+    topics: list[dict[str, str]] = field(default_factory=list)
     chosen_topic_submitters: list[str] = field(default_factory=list)
     pending_topic_submitters: list[str] = field(default_factory=list)
 
@@ -61,7 +61,7 @@ class GameSession:
 
         self.players[player.id] = player
 
-    def add_topic(self, topic: str) -> None:
+    def add_topic(self, topic: dict[str, str]) -> None:
         """Append a topic to the pool used for question generation."""
         self.topics.append(topic)
 

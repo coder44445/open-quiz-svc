@@ -7,7 +7,6 @@ import structlog
 from ollama import AsyncClient
 
 from app.domain.question.difficutly import Difficulty
-from app.domain.question.model import Question
 from app.core.config import settings
 from app.ai.prompts import PromptBuilder
 

@@ -11,13 +11,14 @@ def test_game_session_basic_flow():
     s.add_player(p)
     assert p.id in s.players
 
-    s.add_topic("math")
-    s.add_topic("science")
+    s.add_topic({"text": "math", "difficulty": "medium"})
+    s.add_topic({"text": "science", "difficulty": "medium"})
+    assert len(s.topics) == 2
     # simulate a realistic state progression for play
     s.set_state(GameState.GENERATING)
     s.set_state(GameState.READY)
     s.questions = [
-        Question(id=0, topic="math", text="q1", options=["a", "b"], correct_index=0)
+        Question(id=0, topic="math", difficulty="easy", text="q1", options=["a", "b"], correct_index=0)
     ]
     s.set_state(GameState.IN_PROGRESS)
     assert s.state == GameState.IN_PROGRESS

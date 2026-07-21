@@ -52,8 +52,8 @@ async def test_game_loop_finishes(monkeypatch):
 
     # create a session with two questions
     s = GameSession(room_id='r1')
-    s.questions = [Question(id=0, topic='t', text='q1', options=['a'], correct_index=0),
-                   Question(id=1, topic='t2', text='q2', options=['a'], correct_index=0)]
+    s.questions = [Question(id=0, topic='t', difficulty='easy', text='q1', options=['a'], correct_index=0),
+                   Question(id=1, topic='t2', difficulty='easy', text='q2', options=['a'], correct_index=0)]
     s.players = {Player(name='alice').id: Player(name='alice')}
     s.state = GameState.IN_PROGRESS
     s.time_limit = 0  # quick loop

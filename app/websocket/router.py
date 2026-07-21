@@ -107,3 +107,14 @@ async def websocket_room(websocket: WebSocket, room_id: str) -> None:
     finally:
         # Clean up the Redis listener if this was the last connection
         await event_gateway.remove_connection(room_id, websocket)
+
+        # As requested, if no connections remain, delete the room
+        if not event_gateway.connections.get(room_id):
+            try:
+                async with game_service.store.get_lock(room_id):
+                    session = await game_service.get_session(room_id)
+                    if session:
+                        await game_service.store.delete(room_id)
+                        ctx.log.info("room_deleted_empty_gateway", room_id=room_id)
+            except Exception as e:
+                ctx.log.warning("failed_to_delete_empty_room", error=str(e))

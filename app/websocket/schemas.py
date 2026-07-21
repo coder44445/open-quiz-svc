@@ -11,6 +11,7 @@ class JoinEvent(BaseClientEvent):
 class TopicEvent(BaseClientEvent):
     type: Literal["topic"] = "topic"
     text: str
+    difficulty: Literal["easy", "medium", "hard"] = "medium"
 
 class StartEvent(BaseClientEvent):
     type: Literal["start"] = "start"

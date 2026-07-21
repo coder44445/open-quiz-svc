@@ -68,6 +68,12 @@ class FakeMatch:
 class FakeQuestionRow:
     def __init__(self, question_json):
         self.question_json = question_json
+        self.order = question_json.get('id', 0)
+        self.topic = question_json.get('topic', 'topic')
+        self.difficulty = question_json.get('difficulty', 'easy')
+        self.text = question_json.get('text', 'text')
+        self.options = question_json.get('options', [])
+        self.correct_index = question_json.get('correct_index', 0)
 
 
 class FakeMatchPlayer:
