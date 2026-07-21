@@ -2,8 +2,14 @@ from __future__ import annotations
 
 from sqlalchemy import Integer, Float, String, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from typing import TYPE_CHECKING
 
 from app.infrastructure.database.base import Base
+
+if TYPE_CHECKING:
+    from app.infrastructure.database.models.match import Match
+    from app.infrastructure.database.models.question import Question
+    from app.infrastructure.database.models.player import Player
 
 
 class Answer(Base):
