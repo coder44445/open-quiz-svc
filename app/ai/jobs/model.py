@@ -17,7 +17,7 @@ class JobStatus(str, Enum):
 class GenerationJob:
     job_id: str
     room_id: str
-    topics: list[str]
+    topics: list[dict[str, str]] | list[str]
     difficulty: Difficulty
     count: int
     status: JobStatus = JobStatus.PENDING

@@ -82,7 +82,7 @@ class PromptBuilder:
 
         return f"""You are an expert quiz question generator. Your only job is to return valid JSON.
 
-                TASK: Generate exactly {count} quiz question(s).
+                TASK: Generate exactly {count} quiz question(s) at a {difficulty.value.upper()} difficulty level.
                 
                 OUTPUT FORMAT:
                 - Return ONLY a valid JSON array. No markdown, no explanation, no extra text.
@@ -98,7 +98,7 @@ class PromptBuilder:
                 - {format_rules}
                 - Exactly ONE correct answer per question. correct_index must point to the right answer.
                 - Distribute questions evenly across topics: {topics_list_str}.
-                - Questions must be factually accurate, unambiguous, and appropriate for the difficulty.
+                - Questions must be factually accurate, unambiguous, and strictly tailored to the {difficulty.value.upper()} difficulty level.
                 - Do NOT repeat similar questions.
                 
                 CRITICAL: Return ONLY the JSON array. Any text outside the JSON will break the parser.

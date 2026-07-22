@@ -9,7 +9,7 @@ from app.websocket.event_gateway import EventGateway
 from app.websocket.schemas import (
     ClientEventAdapter, JoinEvent, TopicEvent, StartEvent,
     BeginEvent, AnswerEvent, RejoinEvent, ForceStartEvent, ChatEvent,
-    KickEvent, ConfigureEvent, LeaveEvent,
+    KickEvent, ConfigureEvent, LeaveEvent, RestartEvent,
 )
 from app.websocket.handlers import ConnectionContext, WebSocketEventHandlers, game_service
 
@@ -30,6 +30,7 @@ EVENT_HANDLERS = {
     KickEvent: WebSocketEventHandlers.handle_kick,
     ConfigureEvent: WebSocketEventHandlers.handle_configure,
     LeaveEvent: WebSocketEventHandlers.handle_leave,
+    RestartEvent: WebSocketEventHandlers.handle_restart,
 }
 
 

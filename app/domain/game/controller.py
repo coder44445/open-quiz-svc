@@ -21,7 +21,7 @@ class GameStateController:
         GameState.GENERATING: {GameState.READY, GameState.IN_PROGRESS, GameState.FINISHED},
         GameState.READY: {GameState.IN_PROGRESS},
         GameState.IN_PROGRESS: {GameState.FINISHED},
-        GameState.FINISHED: set(),
+        GameState.FINISHED: {GameState.LOBBY},
     }
 
     def transition(self, current: GameState, target: GameState) -> GameState:

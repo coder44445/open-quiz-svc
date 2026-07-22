@@ -55,12 +55,30 @@ class OllamaProvider:
 
         start = time.perf_counter()
 
+        schema = {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "topic": {"type": "string"},
+                    "difficulty": {"type": "string"},
+                    "text": {"type": "string"},
+                    "options": {
+                        "type": "array",
+                        "items": {"type": "string"}
+                    },
+                    "correct_index": {"type": "integer"}
+                },
+                "required": ["topic", "difficulty", "text", "options", "correct_index"]
+            }
+        }
+
         try:
             response = await self.client.chat(
                 model=self.model,
                 think=False,
                 messages=[{"role": "user", "content": prompt}],
-                format="json",
+                format=schema,
                 options={
                     "temperature": settings.llm_temperature,
                 },

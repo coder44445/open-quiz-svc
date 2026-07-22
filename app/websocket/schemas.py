@@ -7,6 +7,7 @@ class BaseClientEvent(BaseModel):
 class JoinEvent(BaseClientEvent):
     type: Literal["join"] = "join"
     user: str
+    spectator: bool = False
 
 class TopicEvent(BaseClientEvent):
     type: Literal["topic"] = "topic"
@@ -54,6 +55,10 @@ class LeaveEvent(BaseClientEvent):
     """Player intentionally leaves the lobby."""
     type: Literal["leave"] = "leave"
 
+class RestartEvent(BaseClientEvent):
+    """Host requests to restart a finished game."""
+    type: Literal["restart"] = "restart"
+
 ClientEventPayload = Annotated[
     Union[
         JoinEvent,
@@ -67,6 +72,7 @@ ClientEventPayload = Annotated[
         KickEvent,
         ConfigureEvent,
         LeaveEvent,
+        RestartEvent,
     ],
     Field(discriminator="type")
 ]

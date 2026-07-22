@@ -72,6 +72,8 @@ class SessionRepository:
             player_id: Player(**player_data)
             for player_id, player_data in raw.get("players", {}).items()
         }
+        session.chosen_topic_submitters = raw.get("chosen_topic_submitters", [])
+        session.pending_topic_submitters = raw.get("pending_topic_submitters", [])
         session.topics = raw.get("topics", [])
         session.questions = [Question(**question) for question in raw.get("questions", [])]
         session.answers = {
@@ -185,10 +187,13 @@ class SessionRepository:
                     "id": player.id,
                     "name": player.name,
                     "score": player.score,
+                    "is_spectator": getattr(player, "is_spectator", False),
                     "is_connected": getattr(player, "is_connected", True),
                 }
                 for player_id, player in session.players.items()
             },
+            "chosen_topic_submitters": session.chosen_topic_submitters,
+            "pending_topic_submitters": session.pending_topic_submitters,
             "topics": session.topics,
             "questions": [dataclasses.asdict(question) for question in session.questions],
             "answers": {

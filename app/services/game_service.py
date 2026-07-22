@@ -307,11 +307,33 @@ class GameService:
         if session.chosen_topic_submitters:
             raise ValueError("Topic collection is already in progress")
 
-        n = min(5, len(session.players))
+        # Ensure we only pick from connected non-spectators
+        eligible_players = [
+            p for p in session.players.values()
+            if not getattr(p, "is_spectator", False)
+        ]
+        
+        n = min(5, len(eligible_players))
         if n == 0:
-            raise ValueError("No players to request topics from")
+            logger.info("topic_collection_no_eligible_players", room_id=room_id)
+            # Add default topic if none submitted
+            if not session.topics:
+                # If host started without gathering topics, inject a default
+                if not session.players:
+                    # Defensive fallback
+                    await self.add_topic(room_id, "General Knowledge", "medium")
+                else:
+                    await self.add_topic(room_id, "General Knowledge", "medium", session.host_id)
+            
+            await event_bus.publish(GameEvent(
+                type=EventType.TOPICS_COLLECTED,
+                room_id=room_id,
+                payload={"pending_remaining": 0},
+            ))
+            await self.start_game(room_id)
+            return
 
-        chosen = random.sample(list(session.players.values()), n)
+        chosen = random.sample(eligible_players, n)
         session.chosen_topic_submitters = [p.id for p in chosen]
         session.pending_topic_submitters = [p.id for p in chosen]
         await self.store.save(session)
@@ -422,7 +444,7 @@ class GameService:
 
         await create_generation_job(
             room_id=room_id,
-            topics=[t["text"] for t in session.topics],
+            topics=session.topics,
             difficulty=Difficulty(session.difficulty),
             count=count,
         )
@@ -474,4 +496,66 @@ class GameService:
                 logger.exception("match_state_persistence_failed", room_id=room_id, state="in_progress")
         asyncio.create_task(_persist_in_progress_state())
 
+        return session
+
+    async def restart_game(self, room_id: str) -> GameSession:
+        """Restart a finished game by wiping state and transitioning back to LOBBY."""
+        session = await self.store.get(room_id)
+        if not session:
+            raise ValueError("Session not found")
+            
+        if session.state != GameState.FINISHED:
+            raise ValueError("Can only restart finished games")
+            
+        session.set_state(GameState.LOBBY)
+        session.topics = []
+        session.questions = []
+        session.answers = {}
+        session.question_started_at = 0
+        session.current_question_index = 0
+        session.chosen_topic_submitters = []
+        session.pending_topic_submitters = []
+        
+        # Reset player scores
+        for p in session.players.values():
+            p.score = 0
+            
+        # Create a new Match row for the rematch so history is preserved
+        async def _create_new_match():
+            try:
+                async with self.uow_factory() as uow:
+                    new_match = Match(room_id=room_id, state=GameState.LOBBY.value)
+                    await uow.matches.add(new_match)
+                    # Also persist players to the new match
+                    from app.infrastructure.database.models.match_player import MatchPlayer
+                    for p in session.players.values():
+                        await uow.matches.add(
+                            MatchPlayer(
+                                match_id=new_match.id,
+                                player_id=p.id,
+                            )
+                        )
+                    return new_match.id
+            except Exception as e:
+                logger.error("failed_to_create_new_match_on_restart", room_id=room_id, error=str(e))
+                return None
+
+        new_match_id = await _create_new_match()
+        if new_match_id:
+            session.match_id = new_match_id
+
+        await self.store.save(session)
+        
+        # Notify clients
+        await event_bus.publish(GameEvent(
+            type=EventType.GAME_RESTARTED,
+            room_id=room_id,
+            payload={
+                "players": [
+                    {"id": p.id, "name": p.name, "score": p.score, "is_spectator": getattr(p, "is_spectator", False)}
+                    for p in session.players.values()
+                ]
+            }
+        ))
+        
         return session

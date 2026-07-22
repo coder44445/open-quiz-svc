@@ -9,7 +9,7 @@ job_repo = JobRepository()
 
 async def create_generation_job(
     room_id: str,
-    topics: list[str],
+    topics: list[dict[str, str]] | list[str],
     difficulty: Difficulty,
     count: int,
 ):

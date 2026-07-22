@@ -91,74 +91,55 @@ async def generate_questions(ctx, job_id: str) -> None:
             )
         )
 
-        all_questions = []
+        # [ARCHITECTURE INTENT: Streaming Generation]
+        # Generate questions one by one and append them to the session immediately.
+        # This allows the GameLoop to start executing and broadcasting the first question
+        # while the rest are still being generated in the background.
         max_attempts = 3
+        all_questions = []
         
-        batch_size = settings.generation_batch_size
-        if batch_size < 1:
-            batch_size = 1
+        for i in range(job.count):
+            topic_entry = job.topics[i % len(job.topics)]
+            topic = topic_entry.get("text", "General Knowledge") if isinstance(topic_entry, dict) else topic_entry
             
-        generated_count = 0
+            # If the topic dict has a specific difficulty, use it; otherwise fallback to the global job difficulty
+            if isinstance(topic_entry, dict) and "difficulty" in topic_entry:
+                try:
+                    target_diff = Difficulty(topic_entry["difficulty"])
+                except ValueError:
+                    target_diff = job.difficulty
+            else:
+                target_diff = job.difficulty
 
-        # [ARCHITECTURE INTENT: Generative Batching]
-        # We do not ask the LLM to generate 20 questions in a single prompt.
-        # Large outputs often cause local LLMs (like Ollama on smaller GPUs) to OOM,
-        # hallucinate JSON structures, or exceed the context window.
-        # By chunking into small batches (e.g., 2 at a time), we ensure high reliability
-        # and valid JSON parsing, even if it takes slightly longer overall.
-        while generated_count < job.count:
-            current_batch_size = min(batch_size, job.count - generated_count)
-            
-            # Select topics for this batch
-            batch_topics = [
-                job.topics[(generated_count + j) % len(job.topics)]
-                for j in range(current_batch_size)
-            ]
-            
-            batch_questions = None
-            
-            # [ARCHITECTURE INTENT: Exponential Backoff & Retry]
-            # LLMs are non-deterministic. Sometimes they will output malformed JSON 
-            # or refuse to answer. We wrap every generation batch in a retry loop.
-            # If the parser fails, we immediately try again (up to max_attempts) to self-heal.
+            q_index = i
+            q_model = None
+            generated_q = None
+
             for attempt in range(1, max_attempts + 1):
                 metrics.mark_attempt()
                 attempt_start = time.perf_counter()
-                log.info("generation_batch_attempt_started", attempt=attempt, start_index=generated_count, batch_size=current_batch_size)
+                log.info("generation_single_attempt_started", attempt=attempt, index=q_index, topic=topic, difficulty=target_diff.value)
 
                 try:
-                    batch_questions = await engine.generate_questions(
-                        topics=batch_topics,
-                        difficulty=job.difficulty,
-                        count=current_batch_size,
+                    res = await engine.generate_questions(
+                        topics=[topic],
+                        difficulty=target_diff,
+                        count=1,
                     )
                     
-                    if len(batch_questions) < current_batch_size:
-                        raise ValueError(f"AI returned {len(batch_questions)} questions, expected {current_batch_size}")
+                    if not res:
+                        raise ValueError("No questions returned")
                         
-                    # Update IDs to match the overall job sequence index
-                    for j, q in enumerate(batch_questions):
-                        q.id = generated_count + j
+                    generated_q = res[0]
+                    generated_q.id = q_index
                         
                     elapsed_ms = round((time.perf_counter() - attempt_start) * 1000, 2)
-                    log.info(
-                        "generation_batch_attempt_succeeded",
-                        attempt=attempt,
-                        start_index=generated_count,
-                        batch_size=current_batch_size,
-                        elapsed_ms=elapsed_ms,
-                    )
+                    log.info("generation_single_attempt_succeeded", attempt=attempt, index=q_index, elapsed_ms=elapsed_ms)
                     break
 
                 except Exception as exc:
                     elapsed_ms = round((time.perf_counter() - attempt_start) * 1000, 2)
-                    log.warning(
-                        "generation_batch_attempt_failed",
-                        attempt=attempt,
-                        error=str(exc),
-                        elapsed_ms=elapsed_ms,
-                        start_index=generated_count,
-                    )
+                    log.warning("generation_single_attempt_failed", attempt=attempt, error=str(exc), elapsed_ms=elapsed_ms, index=q_index)
 
                     if attempt == max_attempts:
                         raise
@@ -167,34 +148,30 @@ async def generate_questions(ctx, job_id: str) -> None:
                     log.info("generation_backoff", seconds=backoff, attempt=attempt)
                     await asyncio.sleep(backoff)
 
-            if not batch_questions:
-                raise ValueError(f"Failed to generate batch starting at {generated_count} after {max_attempts} attempts")
+            if not generated_q:
+                raise ValueError(f"Failed to generate question {q_index} after {max_attempts} attempts")
 
-            # Persist and broadcast the generated batch
+            # Persist and broadcast this single question immediately
             async with UnitOfWork() as uow:
                 match = await uow.matches.get_by_room(job.room_id)
                 if not match:
-                    raise ValueError("Match record not found for generated questions")
+                    raise ValueError("Match record not found for generated question")
 
-                q_models = []
-                for j, q in enumerate(batch_questions):
-                    q_index = generated_count + j
-                    q_models.append(QuestionModel(
-                        match_id=match.id,
-                        order=q_index,
-                        topic=q.topic,
-                        difficulty=q.difficulty,
-                        text=q.text,
-                        options=q.options,
-                        correct_index=q.correct_index,
-                    ))
-                await uow.questions.save_all(q_models)
+                q_model = QuestionModel(
+                    match_id=match.id,
+                    order=q_index,
+                    topic=generated_q.topic,
+                    difficulty=generated_q.difficulty,
+                    text=generated_q.text,
+                    options=generated_q.options,
+                    correct_index=generated_q.correct_index,
+                )
+                await uow.questions.save_all([q_model])
             
-            for j, q in enumerate(batch_questions):
-                q.id = q_models[j].id
-                all_questions.append(q)
+            generated_q.id = q_model.id
+            all_questions.append(generated_q)
 
-            # Update the session with the questions generated so far so GameLoop can consume them
+            # Update the session with the question so GameLoop can consume it
             session = await session_store.get(job.room_id)
             if not session:
                 log.warning("session_not_found_during_generation")
@@ -206,30 +183,41 @@ async def generate_questions(ctx, job_id: str) -> None:
                 raise ValueError("All players disconnected, stopping question generation early")
                 
             session.questions = list(all_questions)  # copy current state
+            
+            # Transition to READY as soon as the very first question is ready
+            # This allows the host to click "Begin Game" without waiting for the rest
+            if len(all_questions) == 1 and session.state == GameState.GENERATING:
+                session.set_state(GameState.READY)
+                log.info("session_state_early_ready", room_id=job.room_id)
+                
             await session_store.save(session)
 
-            for j, q in enumerate(batch_questions):
-                q_index = generated_count + j
-                log.info("question_persisted", question_index=q_index)
+            log.info("question_persisted", question_index=q_index)
 
-                # Notify clients that one question is ready
-                progress = int(10 + ((q_index + 1) / job.count) * 80)
-                await event_bus.publish(
-                    GameEvent(
-                        type=EventType.QUESTION_READY,
-                        room_id=job.room_id,
-                        payload={"job_id": job.job_id, "question": dataclasses.asdict(q), "index": q_index}
-                    )
+            # Notify clients that one question is ready
+            progress = int(10 + ((q_index + 1) / job.count) * 80)
+            await event_bus.publish(
+                GameEvent(
+                    type=EventType.QUESTION_READY,
+                    room_id=job.room_id,
+                    payload={"job_id": job.job_id, "question": dataclasses.asdict(generated_q), "index": q_index}
                 )
-                await event_bus.publish(
-                    GameEvent(
-                        type=EventType.JOB_PROGRESS,
-                        room_id=job.room_id,
-                        payload={"job_id": job.job_id, "progress": progress}
-                    )
+            )
+            await event_bus.publish(
+                GameEvent(
+                    type=EventType.JOB_PROGRESS,
+                    room_id=job.room_id,
+                    payload={"job_id": job.job_id, "progress": progress}
                 )
-                
-            generated_count += current_batch_size
+            )
+            
+            # If this is the first question, broadcast the state change to unblock the UI
+            if len(all_questions) == 1:
+                await event_bus.publish(GameEvent(
+                    type=EventType.GAME_STATE_CHANGED,
+                    room_id=job.room_id,
+                    payload={"from": GameState.GENERATING.value, "to": GameState.READY.value},
+                ))
 
         # Update the match state to READY now that all questions are generated
         async with UnitOfWork() as uow:

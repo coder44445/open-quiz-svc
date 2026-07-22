@@ -117,7 +117,10 @@ class GameSession:
             return False
         key = str(self.current_question_index)
         answered_ids = {a.player_id for a in self.answers.get(key, [])}
-        return all(pid in answered_ids for pid in self.players)
+        active_players = [pid for pid, p in self.players.items() if not p.is_spectator]
+        if not active_players:
+            return True
+        return all(pid in answered_ids for pid in active_players)
 
     def current_question_dict(self) -> dict | None:
         """Return the current question as a JSON-serialisable dict, or None."""
@@ -145,6 +148,7 @@ class GameSession:
                     score=p.score,
                 )
                 for p in self.players.values()
+                if not p.is_spectator
             ],
             key=lambda x: x.score,
             reverse=True,

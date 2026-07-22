@@ -16,7 +16,7 @@ from app.domain.events import GameEvent
 from app.domain.event_types import EventType
 from app.websocket.schemas import (
     JoinEvent, TopicEvent, StartEvent, BeginEvent, AnswerEvent, RejoinEvent,
-    ForceStartEvent, ChatEvent, KickEvent, ConfigureEvent, LeaveEvent,
+    ForceStartEvent, ChatEvent, KickEvent, ConfigureEvent, LeaveEvent, RestartEvent,
 )
 
 logger = structlog.get_logger(__name__)
@@ -50,7 +50,7 @@ class WebSocketEventHandlers:
 
     @staticmethod
     async def handle_join(ctx: ConnectionContext, payload: JoinEvent) -> None:
-        player = Player(name=payload.user.title())
+        player = Player(name=payload.user.title(), is_spectator=payload.spectator)
         try:
             await game_service.add_player(ctx.room_id, player)
         except ValueError as exc:
@@ -68,6 +68,11 @@ class WebSocketEventHandlers:
 
     @staticmethod
     async def handle_topic(ctx: ConnectionContext, payload: TopicEvent) -> None:
+        session = await game_service.get_session(ctx.room_id)
+        if not session or ctx.player_id not in session.players or session.players[ctx.player_id].is_spectator:
+            ctx.log.warning("topic_rejected_spectator", player_id=ctx.player_id)
+            return
+
         async with game_service.store.get_lock(ctx.room_id):
             try:
                 await game_service.add_topic(ctx.room_id, payload.text, payload.difficulty, ctx.player_id)
@@ -152,6 +157,10 @@ class WebSocketEventHandlers:
 
     @staticmethod
     async def handle_answer(ctx: ConnectionContext, payload: AnswerEvent) -> None:
+        session = await game_service.get_session(ctx.room_id)
+        if not session or ctx.player_id not in session.players or session.players[ctx.player_id].is_spectator:
+            return
+
         # [ARCHITECTURE INTENT: Concurrency & Redis Locks]
         # In a 20-player room, it is highly likely that 2+ players will submit an 
         # answer at the exact same millisecond. If we do not lock the room here, 
@@ -240,7 +249,7 @@ class WebSocketEventHandlers:
             "difficulty": session.difficulty,
             "question_count": session.question_count,
             "players": [
-                {"id": p.id, "name": p.name, "score": p.score}
+                {"id": p.id, "name": p.name, "score": p.score, "is_spectator": getattr(p, "is_spectator", False)}
                 for p in session.players.values()
             ],
             "leaderboard": [
@@ -345,3 +354,18 @@ class WebSocketEventHandlers:
                 return
             await game_service.remove_player(ctx.room_id, ctx.player_id)
             ctx.log.info("player_left_intentionally", player_id=ctx.player_id)
+
+    @staticmethod
+    async def handle_restart(ctx: ConnectionContext, payload: RestartEvent) -> None:
+        """Handle a host request to restart the game from FINISHED state."""
+        async with game_service.store.get_lock(ctx.room_id):
+            session = await game_service.get_session(ctx.room_id)
+            if not session:
+                return
+            
+            if session.host_id != ctx.player_id:
+                ctx.log.warning("restart_rejected_not_host", requester=ctx.player_id)
+                return
+                
+            await game_service.restart_game(ctx.room_id)
+            ctx.log.info("game_restarted_by_host")

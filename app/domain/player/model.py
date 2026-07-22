@@ -13,6 +13,7 @@ class Player:
     name: str
     id: str = field(default_factory=lambda: str(uuid4()))
     score: int = 0
+    is_spectator: bool = False
     is_connected: bool = True
 
     def add_score(self, points: int) -> None:
