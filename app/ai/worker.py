@@ -17,6 +17,7 @@ from app.ai.providers.ollama import OllamaProvider
 from app.infrastructure.database.unit_of_work import UnitOfWork
 from app.infrastructure.database.models.question import Question as QuestionModel
 from app.domain.game.state import GameState
+from app.domain.question.difficutly import Difficulty
 from app.infrastructure.redis.session_repository import SessionRepository
 from app.core.config import settings
 from app.core.redis import get_arq_settings
