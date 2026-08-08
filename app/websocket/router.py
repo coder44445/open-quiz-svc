@@ -6,6 +6,8 @@ from dataclasses import asdict
 
 import structlog
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from app.core.auth import ws_auth
+from app.core.config import settings
 
 from pydantic import ValidationError
 
@@ -57,6 +59,12 @@ async def websocket_room(websocket: WebSocket, room_id: str) -> None:
     while questions are ticking.  Unknown event types are logged and ignored.
     """
 
+    # Verify the JWT *before* upgrading the connection.
+    # ws_auth() closes the WebSocket and returns None on failure.
+    auth_user = await ws_auth(websocket)
+    if auth_user is None and settings.platform_auth_enabled:
+        return  # ws_auth already sent close frame
+
     await websocket.accept()
 
     # Subscribe this client to room-level Redis Pub/Sub events.
@@ -64,6 +72,8 @@ async def websocket_room(websocket: WebSocket, room_id: str) -> None:
 
     # Create connection context
     ctx = ConnectionContext(room_id=room_id, websocket=websocket)
+    if auth_user:
+        ctx.log = ctx.log.bind(auth_user_id=str(auth_user.user_id))
     ctx.log.info("websocket_client_connected")
 
     try:

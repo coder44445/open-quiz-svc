@@ -2,6 +2,8 @@ fastapi[standard]
 uvicorn[standard]
 redis
 arq
+python-jose[cryptography]
+httpx
 pydantic
 sqlalchemy
 alembic

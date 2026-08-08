@@ -1,6 +1,7 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from app.services.game_service import GameService
+from app.core.auth import AuthUser, require_auth
 
 router = APIRouter(prefix="/api/game", tags=["game"])
 
@@ -8,9 +9,10 @@ class CreateRoomResponse(BaseModel):
     room_id: str
 
 @router.post("/create", response_model=CreateRoomResponse)
-async def create_room():
+async def create_room(auth: AuthUser | None = Depends(require_auth)):
     """
     Generate a unique, human-readable room ID securely and create a new game session.
+    Requires a valid JWT from the Identity service when PLATFORM_AUTH_ENABLED=true.
     """
     service = GameService()
     try:

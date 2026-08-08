@@ -48,6 +48,14 @@ class Settings(BaseSettings):
     
     llm_timeout: int = 120
 
+    # --- JWT Authentication ---
+    # These must match the values in the Identity service .env.
+    # Tokens are signed with HS256 using a shared secret.
+    platform_auth_enabled: bool = False
+    jwt_secret: str = "change-me-in-production"
+    jwt_algorithm: str = "HS256"
+    jwt_audience: str = "quiz-service"
+
     @model_validator(mode="after")
     def _validate_cors_in_production(self) -> "Settings":
         if self.environment == "production" and "*" in self.cors_origins:
