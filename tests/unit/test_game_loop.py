@@ -30,6 +30,9 @@ class FakeStore:
     async def save(self, session):
         self._session = session
 
+    async def delete(self, room_id):
+        self._session = None
+
 
 class FakeUoW:
     async def __aenter__(self):
@@ -59,8 +62,13 @@ async def test_game_loop_finishes(monkeypatch):
     s.state = GameState.IN_PROGRESS
     s.time_limit = 0  # quick loop
 
-    # inject fake store and UoW
-    monkeypatch.setattr(loop, 'store', FakeStore(s))
+    from unittest.mock import AsyncMock
+    monkeypatch.setattr('app.services.game_service.event_bus.publish', AsyncMock())
+    monkeypatch.setattr(loop, 'event_bus', AsyncMock())
+
+    fake_store = FakeStore(s)
+    monkeypatch.setattr(svc, 'store', fake_store)
+    monkeypatch.setattr(loop, 'store', fake_store)
 
     # patch sleep to avoid delays
     monkeypatch.setattr('asyncio.sleep', FastSleep())

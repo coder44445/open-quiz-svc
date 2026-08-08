@@ -7,12 +7,14 @@ from app.domain.player.model import Player
 
 class DummyStore:
     def __init__(self):
+        self.sessions = {}
         self.saved = None
 
     async def get(self, room_id):
-        return None
+        return self.sessions.get(room_id)
 
     async def save(self, session):
+        self.sessions[session.room_id] = session
         self.saved = session
 
 
@@ -59,7 +61,7 @@ async def test_create_session():
     assert svc.store.saved is session
 
 @pytest.mark.asyncio
-async def test_add_topic_and_add_player():
+async def test_add_topic_and_add_player(monkeypatch):
     class Repo:
         async def get(self, _):
             return None
@@ -97,12 +99,16 @@ async def test_add_topic_and_add_player():
         async def __aexit__(self, exc_type, exc, tb):
             return False
 
+    from unittest.mock import AsyncMock
+    monkeypatch.setattr('app.services.game_service.event_bus.publish', AsyncMock())
+
     svc = GameService(unit_of_work_factory=FakeU)
     svc.store = DummyStore()
 
+    session = await svc.create_session('r1')
     await svc.add_topic('r1', 'history')
-    assert 'history' in svc.store.saved.topics
+    assert 'history' in session.topics
 
     player = Player(name='bob')
     await svc.add_player('r1', player)
-    assert player.id in svc.store.saved.players
+    assert player.id in session.players
