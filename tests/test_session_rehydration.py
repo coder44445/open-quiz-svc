@@ -2,9 +2,7 @@ import os
 
 import pytest
 
-# Ensure config can initialize during tests by providing minimal env vars
-if "DATABASE_URL" not in os.environ:
-    raise RuntimeError("DATABASE_URL is not set")
+os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5432/fastapi")
 
 os.environ.setdefault('REDIS_URL', 'redis://localhost:6379/0')
 
@@ -68,12 +66,12 @@ class FakeMatch:
 class FakeQuestionRow:
     def __init__(self, question_json):
         self.question_json = question_json
-        self.order = question_json.get('id', 0)
-        self.topic = question_json.get('topic', 'topic')
-        self.difficulty = question_json.get('difficulty', 'easy')
-        self.text = question_json.get('text', 'text')
-        self.options = question_json.get('options', [])
-        self.correct_index = question_json.get('correct_index', 0)
+        self.order = question_json.get("order", question_json.get("id", 0))
+        self.topic = question_json.get("topic", "topic")
+        self.difficulty = question_json.get("difficulty", "easy")
+        self.text = question_json.get("text", "text")
+        self.options = question_json.get("options", ["a", "b"])
+        self.correct_index = question_json.get("correct_index", 0)
 
 
 class FakeMatchPlayer:

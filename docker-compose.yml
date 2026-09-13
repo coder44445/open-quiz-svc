@@ -1,80 +1,50 @@
+# Quiz Service — Standalone Docker Compose
+# Use for solo development with its own db + redis.
+# For the full platform, use the root /folder/docker-compose.yml instead.
+
 services:
-  db:
-    image: postgres:15
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      POSTGRES_DB: ${POSTGRES_DB:-fastapi}
-    volumes:
-      - db_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-fastapi} || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 5s
-
-  redis:
-    image: redis:7
-    command: ["redis-server", "--save", "", "--appendonly", "no"]
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 5s
-
-  # Optional: run Ollama locally if you want the AI provider in-compose.
-  # Uncomment if you have an image and want to include it.
-  # ollama:
-  #   image: ollama/ollama:latest
-  #   ports:
-  #     - "11434:11434"
 
   app:
     build: .
     restart: on-failure
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+    networks:
+      - shared
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-fastapi}}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
-      OLLAMA_HOST: ${OLLAMA_HOST:-http://ollama:11434}
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3.5:0.8b}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@core-infra-db-1:5432/quiz
+      REDIS_URL: redis://core-infra-redis-1:6379/3
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://172.17.0.1:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:8b}
+      PERSONA_BASE_URL: ${PERSONA_BASE_URL:-}
+      PERSONA_SERVICE_TOKEN: ${PERSONA_SERVICE_TOKEN:-}
+      JWT_SECRET: ${JWT_SECRET:-}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-quiz-service}
       CORS_ORIGINS: ${CORS_ORIGINS:-'["http://localhost:3000"]'}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      DEBUG: ${DEBUG:-false}
     ports:
-      - "8000:8000"
+      - "${QUIZ_PORT:-8000}:8000"
     healthcheck:
-      # /healthz checks DB and Redis connectivity.
       test: ["CMD-SHELL", "curl -f http://localhost:8000/healthz || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 15s
 
-  # ARQ background worker that processes AI question-generation jobs.
-  # Shares the same image as the app service — no separate Dockerfile needed.
   worker:
     build: .
     # Override the default entrypoint so the container runs the ARQ worker
     # instead of uvicorn.
     entrypoint: ["uv", "run", "arq", "app.ai.worker.WorkerSettings"]
     restart: on-failure
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+    networks:
+      - shared
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-fastapi}}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
-      OLLAMA_HOST: ${OLLAMA_HOST:-http://ollama:11434}
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3.5:0.8b}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@core-infra-db-1:5432/quiz
+      REDIS_URL: redis://core-infra-redis-1:6379/3
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://172.17.0.1:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:8b}
 
-volumes:
-  db_data:
+networks:
+  shared:
+    name: pulse_shared
+    external: true
