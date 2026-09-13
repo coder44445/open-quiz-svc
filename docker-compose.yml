@@ -44,5 +44,5 @@ services:
 
 networks:
   shared:
-    external:
-      name: pulse_shared
+    name: pulse_shared
+    external: true
