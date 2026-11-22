@@ -11,7 +11,7 @@ wheels/
 
 # Local environment files
 .env
-.env.*
+
 .python-version
 
 # Local database files
